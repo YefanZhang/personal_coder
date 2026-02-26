@@ -48,9 +48,9 @@ class ClaudeCodeExecutor:
 
         try:
             await create_worktree(self.base_repo, branch, worktree_path)
-        except WorktreeError as e:
+        except Exception as e:
             self._task_worktrees.pop(task.id, None)
-            await on_complete(task.id, exit_code=1, error=str(e))
+            await on_complete(task.id, exit_code=1, error=f"worktree creation failed: {e}")
             return
 
         # 2. Build prompt (Plan mode via prompt engineering, not --plan flag which doesn't exist)
