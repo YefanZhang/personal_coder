@@ -13,6 +13,9 @@
 
 set -euo pipefail
 
+# Unset CLAUDECODE to allow launching claude from within another session
+unset CLAUDECODE 2>/dev/null || true
+
 # ── Configuration ────────────────────────────────────────────────────
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TASKS_FILE="$REPO_DIR/data/dev-tasks.json"
