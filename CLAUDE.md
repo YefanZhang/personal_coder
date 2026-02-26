@@ -126,10 +126,10 @@ Then restart the dev server if one is running.
 ### Step 9 — LESSONS
 Append an entry to `PROGRESS.md` using the Experience Log Rules below.
 
-### Step 10 — EXIT
-```bash
-exit 0
-```
+### Step 10 — END SESSION
+- Stop responding. Do **not** pick up another task.
+- The external orchestrator (`scripts/run-tasks.sh`) will start a fresh `claude` session for the next pending task.
+- This ensures each task gets a clean context window and fresh rate-limit budget.
 
 ---
 
@@ -161,5 +161,43 @@ After every task completion **OR** whenever you encounter any problem during a t
 1. **NEVER** ask for permission on anything
 2. **NEVER** mark a task as done before step 7
 3. **NEVER** skip cleanup in step 8
-4. **ALWAYS** exit after completing or failing exactly one task
+4. **ALWAYS** complete or fail exactly one task per session, then stop
 5. Step 7 **must** always happen before step 8, even if step 8 fails
+6. **NEVER** pick up a second task in the same session — the orchestrator handles this
+
+---
+
+## Task Orchestrator
+
+Tasks are run via `scripts/run-tasks.sh`, which invokes one fresh `claude` session per task.
+
+### Why
+- **Fresh context per task** — no accumulated bloat from prior tasks
+- **Rate-limit isolation** — each session starts with a clean token budget
+- **Crash recovery** — if a session dies, the orchestrator resets stale `in_progress` tasks to `pending` and retries
+- **Clean separation** — no stale assumptions carried between tasks
+
+### Usage
+```bash
+# Run all pending tasks (one at a time, fresh session each)
+./scripts/run-tasks.sh
+
+# Run exactly one task then stop
+./scripts/run-tasks.sh --once
+
+# Preview what would run
+./scripts/run-tasks.sh --dry-run
+```
+
+### Configuration (environment variables)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COOLDOWN_SECS` | 15 | Pause between successful tasks |
+| `FAIL_COOLDOWN_SECS` | 60 | Pause after a failed task |
+| `MAX_CONSECUTIVE_FAILURES` | 3 | Stop orchestrator after N consecutive failures |
+
+### Recovery
+On startup, the orchestrator:
+1. Resets any `in_progress` tasks back to `pending` (crash recovery)
+2. Prunes orphaned git worktrees
+3. Then begins the task loop
