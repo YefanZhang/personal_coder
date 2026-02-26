@@ -84,3 +84,18 @@
 **Prevention:** Always escape user content via DOM `textContent`, never `innerHTML` with raw strings.
 
 **Commit:** eae926d
+
+---
+
+### Entry 007 — 2026-02-26: p2-001 Git worktree lifecycle management
+
+**Problem / Change:** When mocking functions imported with `from X import Y` in Python, patching at `X.Y` does NOT affect the importing module's reference. The importing module binds directly to the function object at import time. Tests that patched `backend.worktree.create_worktree` were accidentally passing because the real `create_worktree` ran (using the separately-mocked `asyncio.create_subprocess_exec`), not because the mock was correctly applied. Tests that needed the mock to raise or track calls failed.
+
+**Solution:** Patch at the import location: `backend.executor.create_worktree`, `backend.executor.remove_worktree`, `backend.executor.cleanup_branch` — i.e., the module where `from ... import` binds the name. Also, when `create_worktree` calls `Path(path).parent.mkdir(parents=True, exist_ok=True)`, tests using `/fake/wt` fail with PermissionError because `/fake` cannot be created. Used `tmp_path` fixture for worktree paths in tests.
+
+**Prevention:**
+- When mocking a `from X import Y`-imported function, ALWAYS patch at the consuming module (`consumer_module.Y`), never at the source module (`X.Y`).
+- In tests, never use hardcoded paths like `/fake/...` for operations that create directories — always use `tmp_path` to stay within the test's temp filesystem.
+- When a test passes "accidentally" (real function runs but happens to work due to other mocks), the test is fragile. Verify mocks are actually intercepting calls by checking the mock was called.
+
+**Commit:** 799cb15

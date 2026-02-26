@@ -43,7 +43,7 @@
     {
       "id": "p2-001",
       "title": "Git worktree lifecycle management",
-      "status": "pending",
+      "status": "done",
       "priority": "high",
       "phase": 2,
       "description": "Implement backend/worktree.py with: async create_worktree(base_repo, branch, path), async remove_worktree(base_repo, path), async merge_worktree(base_repo, branch). Update executor.py to call these. Add worktree cleanup on task cancel and task failure. Test parallel execution: create 3 tasks simultaneously, verify 3 separate worktrees exist, all complete independently. Add a scripts/launcher.sh that reads a newline-delimited list of prompts and POSTs them to /api/tasks/batch."
