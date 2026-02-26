@@ -59,7 +59,7 @@
     {
       "id": "p3-001",
       "title": "React kanban board with WebSocket real-time updates",
-      "status": "pending",
+      "status": "done",
       "priority": "medium",
       "phase": 3,
       "description": "Replace the Phase 1 table frontend with a full kanban board in frontend/index.html (single-file React via CDN, no build step). Columns: pending, in_progress, review, completed, failed, cancelled. Each task card shows: title, priority badge, cost_usd, time elapsed (for in_progress). Clicking a card opens a side panel showing task logs (fetched from GET /api/tasks/{id}/logs, then streamed via WebSocket). WebSocket events update card position in real time. Include cancel/retry buttons on appropriate cards."

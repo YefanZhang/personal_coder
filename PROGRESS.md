@@ -115,3 +115,17 @@
 - `poll_interval` should be configurable for testability.
 
 **Commit:** 32f5570
+
+---
+
+### Entry 009 — 2026-02-26: p3-001 React kanban board with WebSocket real-time updates
+
+**Problem / Change:** Replaced the Phase 1 table-based frontend with a full React kanban board. Used React 18, ReactDOM 18, and Babel standalone via CDN (single-file SPA, no build step). Implemented 6 columns (pending, in_progress, review, completed, failed, cancelled), task cards with priority badges, cost display, live elapsed time for in_progress tasks, a slide-in side panel for task details and logs, and real-time WebSocket updates that move cards between columns automatically. No issues encountered — the existing API endpoints and WebSocket protocol supported the kanban UI without changes.
+
+**Solution:** Single `frontend/index.html` with inline `<script type="text/babel">` for JSX. React components: `App` (state management + WebSocket), `CreateForm` (collapsible), `KanbanColumn`, `TaskCard` (with `setInterval` for elapsed time), `SidePanel` (fetches `/api/tasks/{id}` for detail + logs). WebSocket `onmessage` triggers both `fetchTasks()` and, if the side panel is open for the affected task, `fetchTaskDetail()`. Escape key closes the panel.
+
+**Prevention:**
+- When using Babel standalone for JSX in a single-file SPA, use `<script type="text/babel">` — Babel picks this up automatically.
+- `git stash --include-untracked` before rebase when pycache files block it (recurring pattern from p1-004).
+
+**Commit:** 951fbfa
