@@ -42,13 +42,16 @@ class ConnectionManager:
     async def broadcast(self, task_id: int, data: dict) -> None:
         msg = json.dumps({"task_id": task_id, **data})
         dead: list[WebSocket] = []
-        for conn in self.connections:
+        # Iterate over a copy to avoid "list changed size during iteration"
+        # when concurrent broadcasts or disconnects modify self.connections
+        for conn in list(self.connections):
             try:
                 await conn.send_text(msg)
             except Exception:
                 dead.append(conn)
         for conn in dead:
-            self.connections.remove(conn)
+            if conn in self.connections:
+                self.connections.remove(conn)
 
 
 ws_manager = ConnectionManager()

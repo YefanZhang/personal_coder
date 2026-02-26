@@ -6,26 +6,36 @@ from backend.models import TaskStatus, TaskMode
 
 
 class TaskScheduler:
-    def __init__(self, executor, db, ws_manager, max_concurrent: int = 3):
+    def __init__(self, executor, db, ws_manager, max_concurrent: int = 3, poll_interval: float = 2.0):
         self.executor = executor
         self.db = db
         self.ws_manager = ws_manager
         self.max_concurrent = max_concurrent
+        self.poll_interval = poll_interval
         self._running = False
 
     async def start(self):
         self._running = True
         while self._running:
             try:
-                active_count = await self.db.count_tasks(status=TaskStatus.IN_PROGRESS)
-                if active_count < self.max_concurrent:
-                    next_task = await self.db.get_next_pending_task()
-                    if next_task and await self._dependencies_met(next_task):
-                        await self._dispatch(next_task)
+                await self._dispatch_pending()
             except Exception as e:
                 # Log but don't crash the scheduler loop
                 print(f"[scheduler] error in loop: {e}")
-            await asyncio.sleep(2)
+            await asyncio.sleep(self.poll_interval)
+
+    async def _dispatch_pending(self):
+        """Dispatch as many pending tasks as available slots allow."""
+        while True:
+            active_count = await self.db.count_tasks(status=TaskStatus.IN_PROGRESS)
+            if active_count >= self.max_concurrent:
+                break
+            next_task = await self.db.get_next_pending_task()
+            if next_task is None:
+                break
+            if not await self._dependencies_met(next_task):
+                break
+            await self._dispatch(next_task)
 
     def stop(self):
         self._running = False
