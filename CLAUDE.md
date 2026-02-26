@@ -94,18 +94,26 @@ Then run the full test suite in this order:
    ```
 3. If any test fails: fix the code and re-run before proceeding to Step 6.
 
-### Step 6 — PUSH TO MAIN
+### Step 6 — AUTO-MERGE TO MAIN
 ```bash
+git fetch origin main
 git rebase origin/main
+```
+- If rebase fails, follow the **Conflict Resolution** table to resolve, then `git rebase --continue`
+- If rebase succeeds:
+```bash
 git checkout main
 git merge task/[id]
 git push origin main
 ```
+- If any part of this step fails, go back to Step 5 (merge, test, and retry)
 
 ### Step 7 — MARK DONE  ← must happen BEFORE step 8
 - Open `data/dev-tasks.json`
 - Set the task's `status` to `"done"`
 - Save the file
+
+> This MUST happen before Step 8. If the process is killed during cleanup, task state must not be lost.
 
 ### Step 8 — CLEANUP
 ```bash
