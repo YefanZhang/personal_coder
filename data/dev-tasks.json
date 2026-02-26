@@ -67,7 +67,7 @@
     {
       "id": "p3-002",
       "title": "Task creation form with Plan mode and voice input",
-      "status": "pending",
+      "status": "done",
       "priority": "low",
       "phase": 3,
       "description": "Enhance the task creation form: (1) Plan mode checkbox — when checked, prepend the standard plan-mode prefix to the prompt before submitting (document that --plan flag does not exist, this is purely prompt engineering), (2) depends_on multi-select dropdown populated from existing tasks, (3) voice input button using Web Speech API (browser SpeechRecognition), (4) task template dropdown to save/load common prompts (stored in localStorage), (5) Cmd+Enter / Ctrl+Enter submit shortcut."

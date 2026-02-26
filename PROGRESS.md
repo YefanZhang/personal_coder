@@ -129,3 +129,18 @@
 - `git stash --include-untracked` before rebase when pycache files block it (recurring pattern from p1-004).
 
 **Commit:** 951fbfa
+
+---
+
+### Entry 010 — 2026-02-26: p3-002 Enhanced task creation form with Plan mode, voice input, templates
+
+**Problem / Change:** Enhanced the CreateForm component with five new features: (1) Plan mode checkbox that sets `mode: "plan"` and prepends a plan-mode prompt prefix, (2) `depends_on` multi-select dropdown populated from existing tasks with chip-based removal, (3) voice input button using Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`) with continuous recording mode, (4) task template save/load system using localStorage, (5) platform-aware Cmd/Ctrl+Enter hint. Passed `tasks` prop from App to CreateForm so the dependency dropdown can be populated. No backend changes needed — the API already supported `mode`, `depends_on`, and all required fields.
+
+**Solution:** All features implemented in the single-file `frontend/index.html`. Added CSS for plan toggle, dependency chips, voice button with pulse animation, and template row. Templates stored in localStorage under `claude-manager-templates` key. Voice input appends transcribed text to the prompt textarea. Plan mode prepends a structured prefix instructing Claude to analyze, plan, and present for review before executing. The dependency dropdown filters out completed/cancelled tasks and already-selected dependencies.
+
+**Prevention:**
+- Web Speech API requires `SpeechRecognition` or `webkitSpeechRecognition` — always feature-detect and hide the button if unavailable.
+- When passing data between React components via CDN (no modules), prop drilling is the simplest pattern — `tasks` passed from App to CreateForm.
+- localStorage operations should be wrapped in try/catch for private browsing modes that may throw.
+
+**Commit:** 495e391
