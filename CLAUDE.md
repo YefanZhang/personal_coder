@@ -7,11 +7,13 @@
 **Worktrees base:** /home/ubuntu/personal_coder-worktrees/
 
 ### Tech Stack
-<!-- Update this section as the project grows -->
-- Language/Runtime: TBD
-- Framework: TBD
-- Database: TBD
-- Package manager: TBD
+- Language/Runtime: Python 3.11
+- Framework: FastAPI + uvicorn
+- Database: SQLite + aiosqlite
+- Package manager: uv
+- Frontend: React (single-file SPA) or HTMX
+- Real-time: WebSocket
+- Testing: pytest + MCP Playwright (E2E)
 
 ### Key Files
 - `data/dev-tasks.json` — task queue (source of truth for pending work)
@@ -20,16 +22,25 @@
 
 ### How to Run
 ```bash
-# Update these commands when a dev server is added
-# e.g.: npm run dev  |  python main.py  |  go run .
-echo "No dev server configured yet"
+# Install dependencies (first time)
+cd claude-code-web-manager && uv sync
+
+# Start the backend
+uvicorn backend.main:app --reload --port 8000
+
+# Or via systemd (production)
+sudo systemctl start claude-manager
 ```
 
 ### How to Run Tests
 ```bash
-# Update this when a test suite is added
-# e.g.: npm test  |  pytest  |  go test ./...
-echo "No tests configured yet"
+# Unit + integration tests
+pytest tests/ -v --tb=short
+
+# Full E2E suite (requires server running on port 8000)
+uvicorn backend.main:app --port 8000 &
+# Then use MCP Playwright tools: browser_navigate http://localhost:8000
+# See tasks/web_manager_plan.md Section 11 for full E2E workflow
 ```
 
 ---
@@ -67,8 +78,21 @@ git commit -m "[task-id] description of what was done"
 git fetch origin
 git merge origin/main
 ```
-Then run the project test command (see **How to Run Tests** above).
-If tests fail: fix the failing code and re-run before proceeding.
+Then run the full test suite in this order:
+
+1. **Unit tests:** `pytest tests/ -v --tb=short`
+2. **E2E tests (if backend exists):**
+   ```bash
+   uvicorn backend.main:app --port 8000 &
+   SERVER_PID=$!
+   # Use MCP Playwright tools to:
+   #   a. browser_navigate http://localhost:8000
+   #   b. browser_fill the task creation form and submit
+   #   c. browser_wait_for the task card to appear in "pending" column
+   #   d. Assert GET /api/health returns {"status": "ok"}
+   kill $SERVER_PID
+   ```
+3. If any test fails: fix the code and re-run before proceeding to Step 6.
 
 ### Step 6 — PUSH TO MAIN
 ```bash
