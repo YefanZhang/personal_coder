@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Maskable icon: safe area is inner 80% (51.2px padding each side) -->
+  <rect width="512" height="512" fill="#161b22"/>
+  <text x="256" y="295" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="180" font-weight="700" fill="#58a6ff">CC</text>
+  <rect x="100" y="350" width="312" height="12" rx="6" fill="#30363d"/>
+  <rect x="100" y="350" width="208" height="12" rx="6" fill="#3fb950"/>
+</svg>

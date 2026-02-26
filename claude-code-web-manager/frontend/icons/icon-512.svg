@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="64" fill="#161b22"/>
+  <text x="256" y="310" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="200" font-weight="700" fill="#58a6ff">CC</text>
+  <rect x="80" y="370" width="352" height="14" rx="7" fill="#30363d"/>
+  <rect x="80" y="370" width="234" height="14" rx="7" fill="#3fb950"/>
+</svg>
