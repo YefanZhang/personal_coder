@@ -306,6 +306,75 @@
 
     .log-empty { color: #484f58; font-size: 13px; padding: 12px 0; }
 
+    /* -- Plan Mode Toggle -- */
+    .plan-toggle {
+      display: flex; align-items: center; gap: 8px; font-size: 13px;
+    }
+    .plan-toggle input[type="checkbox"] {
+      accent-color: #58a6ff; width: 16px; height: 16px; cursor: pointer;
+    }
+    .plan-toggle label { color: #8b949e; cursor: pointer; user-select: none; }
+    .plan-toggle .plan-hint {
+      font-size: 11px; color: #484f58; font-style: italic;
+    }
+
+    /* -- Multi-select (depends_on) -- */
+    .depends-section { margin-bottom: 10px; }
+    .depends-label {
+      font-size: 12px; color: #8b949e; margin-bottom: 4px; display: block;
+    }
+    .depends-chips {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px;
+    }
+    .dep-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: #0d2644; color: #58a6ff; border: 1px solid #1f6feb;
+      border-radius: 12px; padding: 2px 10px; font-size: 12px;
+    }
+    .dep-chip button {
+      background: none; border: none; color: #58a6ff; cursor: pointer;
+      font-size: 14px; padding: 0; line-height: 1;
+    }
+    .dep-chip button:hover { color: #f85149; }
+    .depends-select {
+      background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+      color: #e1e4e8; padding: 5px 8px; font-size: 13px; width: 100%;
+    }
+
+    /* -- Voice Input -- */
+    .voice-row {
+      display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px;
+    }
+    .voice-row textarea { flex: 1; margin-bottom: 0; }
+    .voice-btn {
+      background: #21262d; border: 1px solid #30363d; color: #8b949e;
+      border-radius: 6px; width: 40px; height: 40px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; flex-shrink: 0; transition: all 0.15s;
+    }
+    .voice-btn:hover { background: #30363d; color: #e1e4e8; }
+    .voice-btn.recording {
+      background: #3d1214; border-color: #f85149; color: #f85149;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .voice-unsupported { display: none; }
+
+    /* -- Template Dropdown -- */
+    .template-row {
+      display: flex; gap: 8px; margin-bottom: 10px; align-items: center;
+    }
+    .template-row select {
+      flex: 1; background: #0d1117; border: 1px solid #30363d;
+      border-radius: 6px; color: #e1e4e8; padding: 5px 8px; font-size: 13px;
+    }
+    .template-row button { padding: 5px 10px; font-size: 12px; }
+    .template-row button.delete-tpl { background: #21262d; border-color: #30363d; }
+    .template-row button.delete-tpl:hover { background: #da3633; border-color: #f85149; }
+
     /* -- Responsive -- */
     @media (max-width: 768px) {
       .kanban-board { padding: 12px; gap: 8px; }
@@ -313,6 +382,7 @@
       .form-row { flex-direction: column; }
       .form-row select { width: 100%; }
       .side-panel { width: 100vw; }
+      .voice-row { flex-direction: row; }
     }
   </style>
 </head>
@@ -525,27 +595,76 @@
       );
     }
 
+    // -- Template helpers (localStorage) --
+    const TEMPLATE_KEY = 'claude-manager-templates';
+
+    function loadTemplates() {
+      try {
+        const raw = localStorage.getItem(TEMPLATE_KEY);
+        return raw ? JSON.parse(raw) : [];
+      } catch { return []; }
+    }
+
+    function saveTemplates(templates) {
+      localStorage.setItem(TEMPLATE_KEY, JSON.stringify(templates));
+    }
+
+    // -- Plan mode prompt prefix --
+    const PLAN_PREFIX = `You are in PLAN MODE. Do NOT execute any code changes yet.
+
+Instead:
+1. Analyze the request carefully
+2. Identify all files that need to be modified
+3. Outline the implementation steps in detail
+4. List potential risks or edge cases
+5. Present the plan for human review
+
+Only after the plan is approved will you proceed with execution.
+
+---
+
+`;
+
     // -- CreateForm Component --
-    function CreateForm({ onCreated }) {
+    function CreateForm({ onCreated, tasks }) {
       const [collapsed, setCollapsed] = useState(true);
       const [title, setTitle] = useState('');
       const [prompt, setPrompt] = useState('');
       const [priority, setPriority] = useState('medium');
+      const [planMode, setPlanMode] = useState(false);
+      const [dependsOn, setDependsOn] = useState([]);
       const [submitting, setSubmitting] = useState(false);
+      const [recording, setRecording] = useState(false);
+      const [templates, setTemplates] = useState(loadTemplates);
+      const recognitionRef = useRef(null);
+      const textareaRef = useRef(null);
+
+      const hasSpeech = typeof window !== 'undefined' &&
+        ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
 
       const handleSubmit = useCallback(async () => {
         if (!title.trim() || !prompt.trim() || submitting) return;
         setSubmitting(true);
         try {
+          const finalPrompt = planMode ? PLAN_PREFIX + prompt.trim() : prompt.trim();
+          const body = {
+            title: title.trim(),
+            prompt: finalPrompt,
+            priority,
+            mode: planMode ? 'plan' : 'execute',
+          };
+          if (dependsOn.length > 0) body.depends_on = dependsOn;
           const resp = await fetch(`${API}/tasks`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: title.trim(), prompt: prompt.trim(), priority }),
+            body: JSON.stringify(body),
           });
           if (resp.ok) {
             setTitle('');
             setPrompt('');
             setPriority('medium');
+            setPlanMode(false);
+            setDependsOn([]);
             onCreated();
           }
         } catch (e) {
@@ -553,7 +672,7 @@
         } finally {
           setSubmitting(false);
         }
-      }, [title, prompt, priority, submitting, onCreated]);
+      }, [title, prompt, priority, planMode, dependsOn, submitting, onCreated]);
 
       useEffect(() => {
         const handler = (e) => {
@@ -566,12 +685,120 @@
         return () => document.removeEventListener('keydown', handler);
       }, [handleSubmit]);
 
+      // -- Voice input --
+      const toggleVoice = useCallback(() => {
+        if (recording && recognitionRef.current) {
+          recognitionRef.current.stop();
+          setRecording(false);
+          return;
+        }
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) return;
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
+        recognition.onresult = (event) => {
+          let transcript = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              transcript += event.results[i][0].transcript;
+            }
+          }
+          if (transcript) {
+            setPrompt(prev => prev + (prev ? ' ' : '') + transcript.trim());
+          }
+        };
+        recognition.onerror = () => setRecording(false);
+        recognition.onend = () => setRecording(false);
+        recognition.start();
+        recognitionRef.current = recognition;
+        setRecording(true);
+      }, [recording]);
+
+      // Cleanup recognition on unmount
+      useEffect(() => {
+        return () => {
+          if (recognitionRef.current) recognitionRef.current.stop();
+        };
+      }, []);
+
+      // -- depends_on handlers --
+      const addDependency = useCallback((e) => {
+        const id = parseInt(e.target.value, 10);
+        if (id && !dependsOn.includes(id)) {
+          setDependsOn(prev => [...prev, id]);
+        }
+        e.target.value = '';
+      }, [dependsOn]);
+
+      const removeDependency = useCallback((id) => {
+        setDependsOn(prev => prev.filter(d => d !== id));
+      }, []);
+
+      // -- Template handlers --
+      const loadTemplate = useCallback((e) => {
+        const idx = parseInt(e.target.value, 10);
+        if (isNaN(idx)) return;
+        const tpl = templates[idx];
+        if (tpl) {
+          setTitle(tpl.title || '');
+          setPrompt(tpl.prompt || '');
+          setPriority(tpl.priority || 'medium');
+          setPlanMode(tpl.planMode || false);
+        }
+        e.target.value = '';
+      }, [templates]);
+
+      const saveTemplate = useCallback(() => {
+        if (!title.trim() && !prompt.trim()) return;
+        const name = window.prompt('Template name:');
+        if (!name) return;
+        const newTpl = { name, title, prompt, priority, planMode };
+        const updated = [...templates, newTpl];
+        setTemplates(updated);
+        saveTemplates(updated);
+      }, [title, prompt, priority, planMode, templates]);
+
+      const deleteTemplate = useCallback((idx) => {
+        const updated = templates.filter((_, i) => i !== idx);
+        setTemplates(updated);
+        saveTemplates(updated);
+      }, [templates]);
+
+      // Available tasks for depends_on (exclude completed/cancelled)
+      const availableTasks = tasks.filter(t =>
+        !['completed', 'cancelled'].includes(t.status) && !dependsOn.includes(t.id)
+      );
+
       return (
         <div className={`create-form${collapsed ? ' collapsed' : ''}`}>
           <button className="form-toggle" onClick={() => setCollapsed(!collapsed)}>
             {collapsed ? '+ New Task' : '- Hide Form'}
           </button>
           <div className="form-body">
+            {/* Template row */}
+            {templates.length > 0 && (
+              <div className="template-row">
+                <select onChange={loadTemplate} defaultValue="">
+                  <option value="" disabled>Load template...</option>
+                  {templates.map((tpl, i) => (
+                    <option key={i} value={i}>{tpl.name}</option>
+                  ))}
+                </select>
+                {templates.length > 0 && (
+                  <button
+                    className="delete-tpl"
+                    onClick={() => {
+                      const idx = window.prompt(`Delete template # (0-${templates.length - 1}):`);
+                      if (idx !== null && !isNaN(parseInt(idx, 10))) deleteTemplate(parseInt(idx, 10));
+                    }}
+                    title="Delete a template"
+                  >Del</button>
+                )}
+              </div>
+            )}
+
             <div className="form-row">
               <input
                 type="text"
@@ -585,16 +812,78 @@
                 <option value="high">High</option>
                 <option value="urgent">Urgent</option>
               </select>
+              <div className="plan-toggle">
+                <input
+                  type="checkbox"
+                  id="plan-mode"
+                  checked={planMode}
+                  onChange={e => setPlanMode(e.target.checked)}
+                />
+                <label htmlFor="plan-mode">Plan mode</label>
+              </div>
             </div>
-            <textarea
-              placeholder="Task prompt (what should Claude do?)"
-              value={prompt}
-              onChange={e => setPrompt(e.target.value)}
-            />
+
+            {/* Prompt + voice */}
+            <div className="voice-row">
+              <textarea
+                ref={textareaRef}
+                placeholder={planMode
+                  ? "Task prompt (Plan mode: Claude will analyze and plan before executing)"
+                  : "Task prompt (what should Claude do?)"
+                }
+                value={prompt}
+                onChange={e => setPrompt(e.target.value)}
+              />
+              {hasSpeech && (
+                <button
+                  className={`voice-btn${recording ? ' recording' : ''}`}
+                  onClick={toggleVoice}
+                  title={recording ? 'Stop recording' : 'Voice input'}
+                  type="button"
+                >
+                  {recording ? '\u23F9' : '\uD83C\uDF99'}
+                </button>
+              )}
+            </div>
+
+            {/* Depends on */}
+            <div className="depends-section">
+              <span className="depends-label">Depends on</span>
+              {dependsOn.length > 0 && (
+                <div className="depends-chips">
+                  {dependsOn.map(id => {
+                    const t = tasks.find(t => t.id === id);
+                    return (
+                      <span key={id} className="dep-chip">
+                        #{id}{t ? ` ${t.title}` : ''}
+                        <button onClick={() => removeDependency(id)}>&times;</button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              {availableTasks.length > 0 && (
+                <select className="depends-select" onChange={addDependency} value="">
+                  <option value="" disabled>Add dependency...</option>
+                  {availableTasks.map(t => (
+                    <option key={t.id} value={t.id}>#{t.id} {t.title} ({t.status})</option>
+                  ))}
+                </select>
+              )}
+            </div>
+
             <div className="form-actions">
-              <span className="hint">Cmd+Enter to submit</span>
+              <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                <span className="hint">
+                  {navigator.platform?.includes('Mac') ? 'Cmd' : 'Ctrl'}+Enter to submit
+                </span>
+                <button className="secondary" onClick={saveTemplate} type="button"
+                  style={{padding: '4px 10px', fontSize: '12px'}}>
+                  Save as template
+                </button>
+              </div>
               <button onClick={handleSubmit} disabled={submitting}>
-                {submitting ? 'Creating...' : 'Create Task'}
+                {submitting ? 'Creating...' : planMode ? 'Create Plan Task' : 'Create Task'}
               </button>
             </div>
           </div>
@@ -738,7 +1027,7 @@
             </div>
           </header>
 
-          <CreateForm onCreated={fetchTasks} />
+          <CreateForm onCreated={fetchTasks} tasks={tasks} />
 
           <div className="kanban-board">
             {COLUMNS.map(col => (
