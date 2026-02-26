@@ -3,7 +3,7 @@
     {
       "id": "p1-001",
       "title": "Project scaffold and database layer",
-      "status": "pending",
+      "status": "done",
       "priority": "high",
       "phase": 1,
       "description": "Create the claude-code-web-manager project structure. Set up pyproject.toml with uv, implement database.py (Database class with all methods from plan Section 5.0), models.py (Task, TaskStatus, TaskMode, TaskPriority, TaskLog Pydantic models), and SQLite schema with indexes. Include startup recovery logic (_recover_stuck_tasks). Write tests/test_database.py covering: init, create_task, get_task, list_tasks, update_task, count_tasks, get_next_pending_task priority ordering, add_log, get_task_logs, delete_task cascade, and startup recovery resetting in_progress→pending."
@@ -11,7 +11,7 @@
     {
       "id": "p1-002",
       "title": "Task executor engine (subprocess)",
-      "status": "pending",
+      "status": "done",
       "priority": "high",
       "phase": 1,
       "description": "Implement backend/executor.py using asyncio.create_subprocess_exec. Must: (1) create git worktree before running claude, (2) call `claude -p <prompt> --dangerously-skip-permissions --output-format json`, (3) stream stdout line-by-line calling on_output callback, (4) write full output to /home/ubuntu/task-logs/task-{id}.log, (5) parse JSON output for result text + token usage (input_tokens, output_tokens, cost_usd), (6) handle Plan mode via prompt prefix (no --plan flag — it does not exist), (7) call on_complete with all fields including tokens. Write tests/test_executor.py with subprocess mocked."
@@ -19,7 +19,7 @@
     {
       "id": "p1-003",
       "title": "Task scheduler",
-      "status": "pending",
+      "status": "done",
       "priority": "high",
       "phase": 1,
       "description": "Implement backend/scheduler.py: async polling loop every 2s, respects max_concurrent limit, checks depends_on via async _dependencies_met(), dispatches via asyncio.create_task, handles _on_output (ws broadcast + db log) and _on_complete (db update with token fields + ws broadcast). Write tests/test_scheduler.py: priority ordering test, dependency blocking test, concurrent limit test, all with mocked executor and db."
@@ -27,7 +27,7 @@
     {
       "id": "p1-004",
       "title": "FastAPI backend with all REST endpoints",
-      "status": "pending",
+      "status": "done",
       "priority": "high",
       "phase": 1,
       "description": "Implement backend/main.py using asynccontextmanager lifespan (NOT deprecated @app.on_event). Include: GET /api/health, POST /api/tasks, POST /api/tasks/batch, GET /api/tasks, GET /api/tasks/{id}, GET /api/tasks/{id}/logs, POST /api/tasks/{id}/cancel, POST /api/tasks/{id}/retry, POST /api/tasks/{id}/approve-plan, DELETE /api/tasks/{id}, WebSocket /ws with dead-connection cleanup in broadcast(). Add X-API-Key auth via FastAPI Depends (reads API_KEY from env, skips check if empty). Implement ConnectionManager.broadcast() with dead-connection cleanup. Write tests/test_api.py using FastAPI TestClient covering all endpoints."
@@ -35,7 +35,7 @@
     {
       "id": "p1-005",
       "title": "Simple HTML MVP frontend (table view)",
-      "status": "pending",
+      "status": "done",
       "priority": "medium",
       "phase": 1,
       "description": "Create frontend/index.html as a single-file SPA (no build step). Must include: task creation form (title, prompt textarea, priority select, Cmd+Enter submit), task list as HTML table showing id/title/status/priority/cost_usd/created_at, WebSocket client that updates table in real time on task status changes, and a footer showing cumulative token cost. No kanban yet — that's Phase 3. Keep it minimal and functional."
