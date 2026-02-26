@@ -83,7 +83,7 @@
     {
       "id": "p4-001",
       "title": "E2E Playwright test suite",
-      "status": "pending",
+      "status": "done",
       "priority": "medium",
       "phase": 4,
       "description": "Create tests/e2e/test_kanban.py. Using MCP Playwright tools (browser_navigate, browser_click, browser_fill, browser_wait_for, browser_screenshot): (1) navigate to http://localhost:8000, (2) create a task via form, (3) assert card appears in pending column, (4) assert GET /api/health returns 200, (5) assert WebSocket connection established (check for ws:// request in network), (6) screenshot the kanban board. Document how to run: start server, then execute test file using pytest with playwright plugin."

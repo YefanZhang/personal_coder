@@ -159,3 +159,19 @@
 - `apple-mobile-web-app-status-bar-style` should be `black-translucent` for dark-themed apps to avoid a white status bar on iOS.
 
 **Commit:** 9a18f74
+
+---
+
+### Entry 012 — 2026-02-26: p4-001 E2E Playwright test suite
+
+**Problem / Change:** Created `tests/e2e/test_kanban.py` with 7 Playwright E2E tests: (1) navigate to app, (2) create task via form, (3) task appears in pending column, (4) health endpoint returns 200, (5) WebSocket connection established, (6) screenshot kanban board, (7) side panel opens on card click. Added `pytest-playwright` to dev dependencies. Required `playwright install-deps chromium` for headless browser system libraries (libatk-1.0.so.0 etc.). Initially `test_task_appears_in_pending_column` failed because the scheduler immediately dispatched the created task, moving it out of pending before the page loaded.
+
+**Solution:** Fixed the pending column test by adding `depends_on=[999999]` (a non-existent task ID) to the API-created task. Since the scheduler's `_dependencies_met()` returns False when a dependency doesn't exist, the task stays in pending indefinitely. Also added an `autouse` fixture (`_cleanup_tasks`) that deletes all tasks after each test for isolation. The CSS `text-transform: uppercase` on column titles means DOM text is "Pending" (title case) not "PENDING" — assertions must match DOM text, not visual text.
+
+**Prevention:**
+- When testing task visibility in a specific kanban column, prevent the scheduler from dispatching by adding an unsatisfied `depends_on` — the scheduler returns False for non-existent dependencies.
+- `playwright install-deps chromium` is required on fresh Linux servers — Chromium headless shell needs system libs like libatk, libcups, etc.
+- CSS `text-transform` doesn't change DOM textContent — Playwright assertions match the actual DOM text, not the visually rendered text.
+- When running E2E tests, always start the server from the correct working directory. Background `&` in bash loses the `cd` context across commands — use `&&` chaining or absolute paths.
+
+**Commit:** 65d8e6d
