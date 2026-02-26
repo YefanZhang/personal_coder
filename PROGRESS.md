@@ -99,3 +99,19 @@
 - When a test passes "accidentally" (real function runs but happens to work due to other mocks), the test is fragile. Verify mocks are actually intercepting calls by checking the mock was called.
 
 **Commit:** 799cb15
+
+---
+
+### Entry 008 — 2026-02-26: p2-002 Concurrency stress test and race condition fixes
+
+**Problem / Change:** Two race conditions found and fixed: (1) Scheduler only dispatched 1 task per iteration — with 3 available slots and 5 pending tasks, it took 3 loop cycles (6 seconds) to fill all slots. (2) `ConnectionManager.broadcast()` iterated over `self.connections` directly, which could raise `RuntimeError: list changed size during iteration` when concurrent broadcasts or disconnects modified the list.
+
+**Solution:** (1) Extracted `_dispatch_pending()` method with inner `while` loop that dispatches as many tasks as available slots allow per iteration. Added configurable `poll_interval` parameter (default 2.0s) for faster test cycles. (2) Changed `broadcast()` to iterate over `list(self.connections)` (a copy) and guarded `remove()` with `if conn in self.connections` check. Added 5 new tests: concurrency stress test (5 tasks/max 3 concurrent with event-based synchronization), startup recovery (2 tests for crash simulation), DB corruption test under concurrent load, and concurrent count accuracy test. All 68 tests pass.
+
+**Prevention:**
+- When iterating over a mutable collection that async callbacks can modify, always iterate over a copy (`list(...)` or `[:]`).
+- Scheduler loops should fill all available slots per iteration, not just one — use an inner loop.
+- Use `asyncio.Event` for test synchronization instead of `asyncio.sleep` for deterministic, timing-independent tests.
+- `poll_interval` should be configurable for testability.
+
+**Commit:** 32f5570

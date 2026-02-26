@@ -51,7 +51,7 @@
     {
       "id": "p2-002",
       "title": "Concurrency stress test and race condition fixes",
-      "status": "pending",
+      "status": "done",
       "priority": "medium",
       "phase": 2,
       "description": "Create a test that fires 5 tasks simultaneously with max_concurrent=3. Verify: (a) never more than 3 tasks in_progress at once, (b) tasks 4 and 5 stay pending until a slot opens, (c) all 5 complete eventually, (d) no DB corruption. Fix any race conditions found. Also test: server crash simulation — manually set 2 tasks to in_progress in DB, restart server, confirm they reset to pending (startup recovery test)."
