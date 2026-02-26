@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Code Manager</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f1117;
+      color: #e1e4e8;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #f0f6fc;
+    }
+
+    .ws-status {
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ws-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #f85149;
+    }
+
+    .ws-dot.connected { background: #3fb950; }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    /* ── Create Form ─────────────────────────────────── */
+    .create-form {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+
+    .create-form h2 {
+      font-size: 16px;
+      margin-bottom: 16px;
+      color: #f0f6fc;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .form-row input[type="text"],
+    .form-row select {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e1e4e8;
+      padding: 8px 12px;
+      font-size: 14px;
+    }
+
+    .form-row input[type="text"] { flex: 1; }
+
+    .form-row select {
+      width: 140px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 80px;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e1e4e8;
+      padding: 8px 12px;
+      font-size: 14px;
+      font-family: inherit;
+      resize: vertical;
+      margin-bottom: 12px;
+    }
+
+    .form-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .form-actions .hint {
+      font-size: 12px;
+      color: #8b949e;
+    }
+
+    button {
+      background: #238636;
+      border: 1px solid #2ea043;
+      border-radius: 6px;
+      color: #fff;
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    button:hover { background: #2ea043; }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    button.danger {
+      background: #da3633;
+      border-color: #f85149;
+    }
+
+    button.danger:hover { background: #f85149; }
+
+    button.secondary {
+      background: #21262d;
+      border-color: #30363d;
+    }
+
+    button.secondary:hover { background: #30363d; }
+
+    button.small {
+      padding: 4px 10px;
+      font-size: 12px;
+    }
+
+    /* ── Table ────────────────────────────────────────── */
+    .task-table-wrap {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th {
+      text-align: left;
+      padding: 12px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+    }
+
+    td {
+      padding: 12px 16px;
+      font-size: 14px;
+      border-bottom: 1px solid #21262d;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    tr:hover { background: #1c2128; }
+
+    .empty-state {
+      text-align: center;
+      padding: 48px 16px;
+      color: #8b949e;
+    }
+
+    /* ── Status badges ───────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .badge-pending     { background: #1f2328; color: #8b949e; border: 1px solid #30363d; }
+    .badge-in_progress { background: #0d2644; color: #58a6ff; border: 1px solid #1f6feb; }
+    .badge-review      { background: #2d1b00; color: #d29922; border: 1px solid #9e6a03; }
+    .badge-completed   { background: #0d2d0d; color: #3fb950; border: 1px solid #238636; }
+    .badge-failed      { background: #3d1214; color: #f85149; border: 1px solid #da3633; }
+    .badge-cancelled   { background: #1f2328; color: #8b949e; border: 1px solid #30363d; }
+
+    .badge-low    { background: #1f2328; color: #8b949e; }
+    .badge-medium { background: #0d2644; color: #58a6ff; }
+    .badge-high   { background: #2d1b00; color: #d29922; }
+    .badge-urgent { background: #3d1214; color: #f85149; }
+
+    .actions-cell {
+      display: flex;
+      gap: 6px;
+    }
+
+    /* ── Footer ──────────────────────────────────────── */
+    .footer {
+      margin-top: 24px;
+      padding: 16px 0;
+      border-top: 1px solid #30363d;
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      color: #8b949e;
+    }
+
+    .cost { font-weight: 600; color: #3fb950; }
+
+    /* ── Responsive ──────────────────────────────────── */
+    @media (max-width: 768px) {
+      .form-row { flex-direction: column; }
+      .form-row select { width: 100%; }
+      .container { padding: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Claude Code Manager</h1>
+    <div class="ws-status">
+      <div class="ws-dot" id="ws-dot"></div>
+      <span id="ws-label">Disconnected</span>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- Create Task Form -->
+    <div class="create-form">
+      <h2>New Task</h2>
+      <div class="form-row">
+        <input type="text" id="task-title" placeholder="Task title" />
+        <select id="task-priority">
+          <option value="low">Low</option>
+          <option value="medium" selected>Medium</option>
+          <option value="high">High</option>
+          <option value="urgent">Urgent</option>
+        </select>
+      </div>
+      <textarea id="task-prompt" placeholder="Task prompt (what should Claude do?)"></textarea>
+      <div class="form-actions">
+        <span class="hint">Cmd+Enter to submit</span>
+        <button id="submit-btn" onclick="createTask()">Create Task</button>
+      </div>
+    </div>
+
+    <!-- Task Table -->
+    <div class="task-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Priority</th>
+            <th>Cost</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="task-tbody">
+          <tr><td colspan="7" class="empty-state">No tasks yet. Create one above.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <span id="task-count">0 tasks</span>
+      <span>Total cost: <span class="cost" id="total-cost">$0.00</span></span>
+    </div>
+  </div>
+
+  <script>
+    const API = '/api';
+    let tasks = [];
+    let ws = null;
+
+    // ── API calls ──────────────────────────────────────
+    async function fetchTasks() {
+      try {
+        const resp = await fetch(`${API}/tasks`);
+        tasks = await resp.json();
+        renderTable();
+      } catch (e) {
+        console.error('Failed to fetch tasks:', e);
+      }
+    }
+
+    async function createTask() {
+      const title = document.getElementById('task-title').value.trim();
+      const prompt = document.getElementById('task-prompt').value.trim();
+      const priority = document.getElementById('task-priority').value;
+
+      if (!title || !prompt) return;
+
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+
+      try {
+        const resp = await fetch(`${API}/tasks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, prompt, priority }),
+        });
+
+        if (resp.ok) {
+          document.getElementById('task-title').value = '';
+          document.getElementById('task-prompt').value = '';
+          document.getElementById('task-priority').value = 'medium';
+          await fetchTasks();
+        }
+      } catch (e) {
+        console.error('Failed to create task:', e);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function cancelTask(id) {
+      await fetch(`${API}/tasks/${id}/cancel`, { method: 'POST' });
+      await fetchTasks();
+    }
+
+    async function retryTask(id) {
+      await fetch(`${API}/tasks/${id}/retry`, { method: 'POST' });
+      await fetchTasks();
+    }
+
+    async function deleteTask(id) {
+      await fetch(`${API}/tasks/${id}`, { method: 'DELETE' });
+      await fetchTasks();
+    }
+
+    // ── Rendering ──────────────────────────────────────
+    function renderTable() {
+      const tbody = document.getElementById('task-tbody');
+
+      if (tasks.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No tasks yet. Create one above.</td></tr>';
+        document.getElementById('task-count').textContent = '0 tasks';
+        document.getElementById('total-cost').textContent = '$0.00';
+        return;
+      }
+
+      let totalCost = 0;
+      tbody.innerHTML = tasks.map(t => {
+        const cost = t.cost_usd || 0;
+        totalCost += cost;
+        const created = new Date(t.created_at).toLocaleString();
+        const actions = getActions(t);
+
+        return `<tr>
+          <td>${t.id}</td>
+          <td>${esc(t.title)}</td>
+          <td><span class="badge badge-${t.status}">${t.status.replace('_', ' ')}</span></td>
+          <td><span class="badge badge-${t.priority}">${t.priority}</span></td>
+          <td>${cost > 0 ? '$' + cost.toFixed(4) : '-'}</td>
+          <td>${created}</td>
+          <td class="actions-cell">${actions}</td>
+        </tr>`;
+      }).join('');
+
+      document.getElementById('task-count').textContent = `${tasks.length} task${tasks.length === 1 ? '' : 's'}`;
+      document.getElementById('total-cost').textContent = `$${totalCost.toFixed(4)}`;
+    }
+
+    function getActions(t) {
+      const btns = [];
+      if (t.status === 'in_progress' || t.status === 'pending') {
+        btns.push(`<button class="small danger" onclick="cancelTask(${t.id})">Cancel</button>`);
+      }
+      if (t.status === 'failed' || t.status === 'cancelled') {
+        btns.push(`<button class="small secondary" onclick="retryTask(${t.id})">Retry</button>`);
+      }
+      if (t.status !== 'in_progress') {
+        btns.push(`<button class="small danger" onclick="deleteTask(${t.id})">Delete</button>`);
+      }
+      return btns.join('');
+    }
+
+    function esc(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    // ── WebSocket ──────────────────────────────────────
+    function connectWs() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+      ws.onopen = () => {
+        document.getElementById('ws-dot').classList.add('connected');
+        document.getElementById('ws-label').textContent = 'Connected';
+      };
+
+      ws.onclose = () => {
+        document.getElementById('ws-dot').classList.remove('connected');
+        document.getElementById('ws-label').textContent = 'Disconnected';
+        setTimeout(connectWs, 3000);
+      };
+
+      ws.onerror = () => ws.close();
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'status' || msg.type === 'complete') {
+            // Refresh task list on status changes
+            fetchTasks();
+          }
+        } catch (e) {
+          console.error('WS parse error:', e);
+        }
+      };
+    }
+
+    // ── Keyboard shortcut ──────────────────────────────
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        createTask();
+      }
+    });
+
+    // ── Init ───────────────────────────────────────────
+    fetchTasks();
+    connectWs();
+  </script>
+</body>
+</html>
