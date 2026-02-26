@@ -76,7 +76,8 @@ def test_create_task_via_form(page: Page):
 
 def test_task_appears_in_pending_column(page: Page):
     """Create a task via API, verify it shows up in the pending kanban column."""
-    # Create task via API
+    # Create task with an unsatisfied dependency so the scheduler won't
+    # dispatch it (depends_on=[999999] — a non-existent task keeps it pending)
     resp = page.request.post(
         f"{BASE_URL}/api/tasks",
         data={
@@ -84,6 +85,7 @@ def test_task_appears_in_pending_column(page: Page):
             "prompt": "Test prompt for pending column verification",
             "priority": "medium",
             "mode": "execute",
+            "depends_on": [999999],
         },
     )
     assert resp.ok, f"Failed to create task: {resp.status}"
