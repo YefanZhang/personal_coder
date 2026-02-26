@@ -144,3 +144,18 @@
 - localStorage operations should be wrapped in try/catch for private browsing modes that may throw.
 
 **Commit:** 495e391
+
+---
+
+### Entry 011 — 2026-02-26: p3-003 PWA manifest and service worker
+
+**Problem / Change:** Added PWA support: manifest.json (name, short_name, start_url, display: standalone, themed colors matching the dark UI), service worker (cache-first for app shell, network-only for API/WebSocket), SVG app icons (192, 512, maskable-512), and updated index.html with manifest link, apple-mobile-web-app meta tags, favicon link, and SW registration. No issues encountered — straightforward task.
+
+**Solution:** Created `frontend/manifest.json`, `frontend/sw.js`, `frontend/icons/` with 3 SVG icons. Updated `<head>` in index.html with `<link rel="manifest">`, `<meta name="theme-color">`, `<meta name="apple-mobile-web-app-capable">`, `<meta name="apple-mobile-web-app-status-bar-style">`, `<link rel="icon">`, `<link rel="apple-touch-icon">`. Added SW registration script before `</body>`. Service worker uses stale-while-revalidate pattern for cached assets and skips `/api/` and `/ws` paths entirely.
+
+**Prevention:**
+- SVG icons work well for PWAs — no need for multiple PNG sizes. Just provide different viewBox dimensions.
+- Service workers must explicitly skip API and WebSocket paths to avoid caching dynamic data.
+- `apple-mobile-web-app-status-bar-style` should be `black-translucent` for dark-themed apps to avoid a white status bar on iOS.
+
+**Commit:** 9a18f74

@@ -75,7 +75,7 @@
     {
       "id": "p3-003",
       "title": "PWA manifest and service worker",
-      "status": "pending",
+      "status": "done",
       "priority": "low",
       "phase": 3,
       "description": "Add frontend/manifest.json (name, short_name, start_url, display: standalone, icons) and frontend/sw.js (basic cache-first service worker for offline shell). Update index.html to link manifest and register SW. Test: Safari on iPhone — 'Add to Home Screen' should show app icon and launch in standalone mode without browser chrome."
