@@ -39,6 +39,7 @@ echo "No tests configured yet"
 Follow these steps **in exact order** for every task. Do not skip, reorder, or combine steps.
 
 ### Step 1 — CLAIM TASK
+- Read `PROGRESS.md` in full before doing anything else — apply all past lessons to this task
 - Read `data/dev-tasks.json`
 - Pick the **first** task whose `status` is `"pending"`
 - Immediately set its `status` to `"in_progress"` and save the file
@@ -91,18 +92,25 @@ git push origin --delete task/[id]
 Then restart the dev server if one is running.
 
 ### Step 9 — LESSONS
-Append a short summary to `PROGRESS.md`:
-```
-## [task-id] — [short title]
-Date: YYYY-MM-DD
-What was done: ...
-Issues encountered: ...
-```
+Append an entry to `PROGRESS.md` using the Experience Log Rules below.
 
 ### Step 10 — EXIT
 ```bash
 exit 0
 ```
+
+---
+
+## Experience Log Rules
+
+After every task completion **OR** whenever you encounter any problem during a task, append an entry to `PROGRESS.md` with these exact fields:
+
+- **Problem / Change:** What problem was encountered, or what important change was made
+- **Solution:** How it was solved
+- **Prevention:** How to avoid it in the future
+- **Commit:** The git commit ID related to this change (mandatory)
+
+**Never make the same mistake twice. Always read PROGRESS.md at the start of each task before doing any work.**
 
 ---
 
