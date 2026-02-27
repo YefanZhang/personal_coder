@@ -222,6 +222,25 @@
 
     .elapsed { color: #58a6ff; font-size: 11px; }
 
+    .card-activity {
+      font-size: 11px; color: #8b949e; margin-top: 6px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+      padding: 3px 6px; background: #0d2644; border-radius: 4px;
+      border: 1px solid #1f6feb33;
+    }
+
+    .live-log-section {
+      background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+      padding: 10px 12px; max-height: 300px; overflow-y: auto;
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 12px; line-height: 1.5; margin-bottom: 16px;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .live-log-section .log-line { color: #e1e4e8; }
+    .live-log-section .log-line.tool-use { color: #58a6ff; }
+    .live-log-section .log-line.session-info { color: #8b949e; font-style: italic; }
+
     /* -- Side Panel -- */
     .side-panel-overlay {
       position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -424,7 +443,7 @@
     }
 
     // -- TaskCard Component --
-    function TaskCard({ task, selected, onSelect }) {
+    function TaskCard({ task, selected, onSelect, lastActivity }) {
       const [elapsed, setElapsed] = useState('');
 
       useEffect(() => {
@@ -453,12 +472,15 @@
             {cost > 0 && <span>${cost.toFixed(4)}</span>}
             {elapsed && <span className="elapsed">{elapsed}</span>}
           </div>
+          {task.status === 'in_progress' && lastActivity && (
+            <div className="card-activity">{lastActivity}</div>
+          )}
         </div>
       );
     }
 
     // -- KanbanColumn Component --
-    function KanbanColumn({ column, tasks, selectedId, onSelect }) {
+    function KanbanColumn({ column, tasks, selectedId, onSelect, streamingLogs }) {
       const colTasks = tasks.filter(t => t.status === column.key);
 
       return (
@@ -471,14 +493,19 @@
             {colTasks.length === 0 ? (
               <div className="column-empty">No tasks</div>
             ) : (
-              colTasks.map(t => (
-                <TaskCard
-                  key={t.id}
-                  task={t}
-                  selected={selectedId === t.id}
-                  onSelect={onSelect}
-                />
-              ))
+              colTasks.map(t => {
+                const taskLogs = streamingLogs[t.id] || [];
+                const lastLog = taskLogs.length > 0 ? taskLogs[taskLogs.length - 1] : null;
+                return (
+                  <TaskCard
+                    key={t.id}
+                    task={t}
+                    selected={selectedId === t.id}
+                    onSelect={onSelect}
+                    lastActivity={lastLog}
+                  />
+                );
+              })
             )}
           </div>
         </div>
@@ -486,15 +513,20 @@
     }
 
     // -- SidePanel Component --
-    function SidePanel({ task, logs, onClose, onCancel, onRetry, onDelete }) {
+    function SidePanel({ task, logs, streamingLogs, onClose, onCancel, onRetry, onDelete }) {
       if (!task) return null;
 
       const logEndRef = useRef(null);
+      const liveLogRef = useRef(null);
+      const taskStreamLogs = streamingLogs[task.id] || [];
+
       useEffect(() => {
-        if (logEndRef.current) {
+        if (liveLogRef.current) {
+          liveLogRef.current.scrollTop = liveLogRef.current.scrollHeight;
+        } else if (logEndRef.current) {
           logEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
-      }, [logs]);
+      }, [logs, taskStreamLogs]);
 
       const cost = task.cost_usd || 0;
       const canCancel = task.status === 'pending' || task.status === 'in_progress';
@@ -575,10 +607,35 @@
                 )}
               </div>
 
+              {/* Live streaming output for in_progress tasks */}
+              {task.status === 'in_progress' && taskStreamLogs.length > 0 && (
+                <div className="log-section">
+                  <h3>Live Output</h3>
+                  <div className="live-log-section" ref={liveLogRef}>
+                    {taskStreamLogs.map((line, i) => {
+                      const isToolUse = line.startsWith('[');
+                      return (
+                        <div key={i} className={`log-line${isToolUse ? ' tool-use' : ''}`}>
+                          {line}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Completed/failed tasks: show output */}
+              {task.output && task.status !== 'in_progress' && (
+                <div className="task-detail">
+                  <label>Output</label>
+                  <div className="prompt-text" style={{maxHeight: '200px'}}>{task.output}</div>
+                </div>
+              )}
+
               <div className="log-section">
                 <h3>Logs</h3>
                 <div className="log-entries">
-                  {(!logs || logs.length === 0) ? (
+                  {(!logs || logs.length === 0) && taskStreamLogs.length === 0 ? (
                     <div className="log-empty">No logs yet.</div>
                   ) : (
                     logs.map((log, i) => {
@@ -905,7 +962,12 @@ Only after the plan is approved will you proceed with execution.
       const [selectedTask, setSelectedTask] = useState(null);
       const [logs, setLogs] = useState([]);
       const [wsConnected, setWsConnected] = useState(false);
+      const [streamingLogs, setStreamingLogs] = useState({});
       const wsRef = useRef(null);
+      const selectedIdRef = useRef(null);
+
+      // Keep ref in sync so WebSocket handler sees the latest value
+      useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
 
       // Fetch all tasks
       const fetchTasks = useCallback(async () => {
@@ -981,15 +1043,30 @@ Only after the plan is approved will you proceed with execution.
           socket.onmessage = (event) => {
             try {
               const msg = JSON.parse(event.data);
-              // Refresh task list on any event
-              fetchTasks();
-              // If the side panel is open for this task, refresh its detail
-              setSelectedId(current => {
-                if (current === msg.task_id) {
+
+              if (msg.type === 'output') {
+                // Accumulate streaming output locally (no API refetch)
+                setStreamingLogs(prev => {
+                  const existing = prev[msg.task_id] || [];
+                  // Cap at 500 lines to prevent memory issues
+                  const updated = [...existing, msg.data].slice(-500);
+                  return { ...prev, [msg.task_id]: updated };
+                });
+              } else {
+                // status/complete events: refetch tasks and detail
+                fetchTasks();
+                if (selectedIdRef.current === msg.task_id) {
                   fetchTaskDetail(msg.task_id);
                 }
-                return current;
-              });
+                // On complete, clear streaming logs for this task
+                if (msg.type === 'complete') {
+                  setStreamingLogs(prev => {
+                    const copy = { ...prev };
+                    delete copy[msg.task_id];
+                    return copy;
+                  });
+                }
+              }
             } catch (e) {
               console.error('WS parse error:', e);
             }
@@ -1044,6 +1121,7 @@ Only after the plan is approved will you proceed with execution.
                 tasks={tasks}
                 selectedId={selectedId}
                 onSelect={handleSelect}
+                streamingLogs={streamingLogs}
               />
             ))}
           </div>
@@ -1052,6 +1130,7 @@ Only after the plan is approved will you proceed with execution.
             <SidePanel
               task={selectedTask}
               logs={logs}
+              streamingLogs={streamingLogs}
               onClose={handleClose}
               onCancel={handleCancel}
               onRetry={handleRetry}

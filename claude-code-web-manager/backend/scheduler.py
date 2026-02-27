@@ -58,6 +58,7 @@ class TaskScheduler:
         return True
 
     async def _dispatch(self, task) -> None:
+        print(f"[scheduler] dispatching task {task.id} (title={task.title!r})")
         await self.db.update_task(
             task.id,
             status=TaskStatus.IN_PROGRESS,
@@ -67,12 +68,43 @@ class TaskScheduler:
             task.id, {"type": "status", "status": TaskStatus.IN_PROGRESS}
         )
         await self._notify_state_change()
-        asyncio.create_task(
+        t = asyncio.create_task(
             self.executor.execute_task(task, self._on_output, self._on_complete)
         )
+        t.add_done_callback(lambda fut: self._handle_task_exception(fut, task.id))
+
+    def _handle_task_exception(self, fut: asyncio.Future, task_id: int) -> None:
+        """Catch unhandled exceptions from fire-and-forget executor tasks."""
+        if fut.cancelled():
+            print(f"[scheduler] task {task_id}: executor task was cancelled")
+            return
+        exc = fut.exception()
+        if exc is not None:
+            print(f"[scheduler] task {task_id}: unhandled executor exception: {exc}")
+            asyncio.create_task(self._fail_task(task_id, str(exc)))
+
+    async def _fail_task(self, task_id: int, error: str) -> None:
+        """Mark a task as failed when the executor raises an unhandled exception."""
+        try:
+            await self.db.update_task(
+                task_id,
+                status=TaskStatus.FAILED,
+                error=f"unhandled executor error: {error}",
+                completed_at=datetime.now(),
+            )
+            await self.ws_manager.broadcast(
+                task_id, {"type": "complete", "status": TaskStatus.FAILED}
+            )
+            await self._notify_state_change()
+        except Exception as e:
+            print(f"[scheduler] task {task_id}: failed to mark as failed: {e}")
 
     async def _on_output(self, task_id: int, chunk: str) -> None:
-        await self.db.add_log(task_id, "info", chunk, raw_output=chunk)
+        try:
+            await self.db.add_log(task_id, "info", chunk, raw_output=chunk)
+        except Exception:
+            # Task may have been deleted while still executing (e.g. E2E test cleanup)
+            pass
         await self.ws_manager.broadcast(task_id, {"type": "output", "data": chunk})
 
     async def _on_complete(

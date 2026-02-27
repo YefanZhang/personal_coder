@@ -29,11 +29,47 @@ def make_task(
     )
 
 
+# -- Helpers for building stream-json NDJSON lines --
+
+def make_system_event(model="claude-test"):
+    return json.dumps({"type": "system", "subtype": "init", "model": model, "tools": []})
+
+
+def make_assistant_event(text):
+    return json.dumps({
+        "type": "assistant",
+        "message": {
+            "content": [{"type": "text", "text": text}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        },
+    })
+
+
+def make_tool_use_event(name, tool_input):
+    return json.dumps({
+        "type": "assistant",
+        "message": {
+            "content": [{"type": "tool_use", "name": name, "input": tool_input}],
+        },
+    })
+
+
+def make_result_event(result="", input_tokens=100, output_tokens=50, cost=0.001):
+    return json.dumps({
+        "type": "result",
+        "subtype": "success",
+        "result": result,
+        "total_cost_usd": cost,
+        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+    })
+
+
 class FakeProcess:
     """Minimal asyncio.subprocess.Process mock."""
 
     def __init__(self, stdout_lines: list[str], returncode: int = 0, stderr: str = ""):
         self.returncode = returncode
+        self.pid = 12345
         self._stdout_lines = stdout_lines
         self._stderr = stderr.encode()
         self.stdout = self._make_reader()
@@ -76,27 +112,33 @@ def executor(tmp_log_dir, tmp_path):
 
 
 async def test_execute_task_calls_on_output_and_on_complete(executor, tmp_log_dir):
-    output_data = json.dumps({
-        "result": "Task done",
-        "usage": {"input_tokens": 100, "output_tokens": 50},
-        "total_cost_usd": 0.001,
-    })
-    fake_proc = FakeProcess(stdout_lines=[output_data])
+    """stream-json format: system + assistant + result events."""
+    ndjson_lines = [
+        make_system_event(),
+        make_assistant_event("Task done"),
+        make_result_event(result="Task done", input_tokens=100, output_tokens=50, cost=0.001),
+    ]
+    fake_proc = FakeProcess(stdout_lines=ndjson_lines)
 
-    on_output = AsyncMock()
+    output_calls = []
     complete_kwargs = {}
+
+    async def on_output(task_id, text):
+        output_calls.append(text)
 
     async def on_complete(task_id, **kwargs):
         complete_kwargs.update(kwargs)
         complete_kwargs["task_id"] = task_id
 
     with patch("backend.executor.create_worktree", new_callable=AsyncMock) as mock_create_wt, \
-         patch("asyncio.create_subprocess_exec", return_value=fake_proc):
+         patch("asyncio.create_subprocess_exec", return_value=fake_proc), \
+         patch("backend.executor.shutil.which", return_value="/usr/bin/claude"):
         mock_create_wt.return_value = "/fake/worktree"
         task = make_task()
         await executor.execute_task(task, on_output, on_complete)
 
-    on_output.assert_called_once_with(1, output_data)
+    # System event produces a session message, assistant event produces text
+    assert any("Task done" in c for c in output_calls)
     assert complete_kwargs["exit_code"] == 0
     assert complete_kwargs["output"] == "Task done"
     assert complete_kwargs["input_tokens"] == 100
@@ -106,18 +148,24 @@ async def test_execute_task_calls_on_output_and_on_complete(executor, tmp_log_di
 
 
 async def test_execute_task_writes_log_file(executor, tmp_log_dir):
-    output_data = "line1"
-    fake_proc = FakeProcess(stdout_lines=[output_data], returncode=0)
+    ndjson_lines = [
+        make_system_event(),
+        make_result_event(result="done"),
+    ]
+    fake_proc = FakeProcess(stdout_lines=ndjson_lines, returncode=0)
 
     with patch("backend.executor.create_worktree", new_callable=AsyncMock) as mock_create_wt, \
-         patch("asyncio.create_subprocess_exec", return_value=fake_proc):
+         patch("asyncio.create_subprocess_exec", return_value=fake_proc), \
+         patch("backend.executor.shutil.which", return_value="/usr/bin/claude"):
         mock_create_wt.return_value = "/fake/worktree"
         task = make_task(task_id=42)
         await executor.execute_task(task, AsyncMock(), AsyncMock())
 
     log_file = Path(tmp_log_dir) / "task-42.log"
     assert log_file.exists()
-    assert log_file.read_text() == "line1\n"
+    content = log_file.read_text()
+    # Log file should contain the raw NDJSON lines
+    assert '"type": "system"' in content or '"type":"system"' in content
 
 
 async def test_worktree_failure_calls_on_complete_with_error(executor):
@@ -139,56 +187,128 @@ async def test_plan_mode_prepends_prefix_to_prompt(executor):
 
     async def fake_exec(*args, **kwargs):
         captured_cmd.extend(args)
-        return FakeProcess(stdout_lines=[], returncode=0)
+        return FakeProcess(stdout_lines=[make_result_event()], returncode=0)
 
     with patch("backend.executor.create_worktree", new_callable=AsyncMock) as mock_create_wt, \
-         patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+         patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+         patch("backend.executor.shutil.which", return_value="/usr/bin/claude"):
         mock_create_wt.return_value = "/fake/worktree"
         task = make_task(prompt="Write a function", mode=TaskMode.PLAN)
         await executor.execute_task(task, AsyncMock(), AsyncMock())
 
     all_args = " ".join(str(a) for a in captured_cmd)
     assert "IMPORTANT: Before writing any code" in all_args
+    # Workflow suffix should also be present
+    assert "Post-Implementation Workflow" in all_args
+    assert "git push origin main" in all_args
 
 
-async def test_non_json_output_uses_raw_text(executor):
+async def test_workflow_instructions_appended_to_prompt(executor):
+    """Every task prompt includes git workflow instructions with correct branch/path/repo values."""
+    captured_cmd = []
+
+    async def fake_exec(*args, **kwargs):
+        captured_cmd.extend(args)
+        return FakeProcess(stdout_lines=[make_result_event()], returncode=0)
+
+    with patch("backend.executor.create_worktree", new_callable=AsyncMock) as mock_create_wt, \
+         patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+         patch("backend.executor.shutil.which", return_value="/usr/bin/claude"):
+        mock_create_wt.return_value = "/fake/worktree"
+        task = make_task(task_id=42, title="My cool task", prompt="Do something")
+        await executor.execute_task(task, AsyncMock(), AsyncMock())
+
+    # The prompt is passed via -p flag; reconstruct it from captured args
+    all_args = " ".join(str(a) for a in captured_cmd)
+
+    # Workflow section is present
+    assert "Post-Implementation Workflow" in all_args
+    assert "Claude Code Web Manager" in all_args
+
+    # Git commands reference correct values
+    assert 'git commit -m "[task-42] My cool task"' in all_args
+    assert "git push origin main" in all_args
+
+    # Branch and path values are interpolated
+    branch, worktree_path = executor._worktree_info(task)
+    assert f"Your current branch is: {branch}" in all_args
+    assert f"The main repository is at: {executor.base_repo}" in all_args
+
+    # CLAUDE.md override instruction is present
+    assert 'Ignore the "Task Lifecycle"' in all_args
+
+
+async def test_non_json_output_streams_raw_text(executor):
+    """Non-JSON lines are streamed as raw output."""
     fake_proc = FakeProcess(stdout_lines=["plain text output"], returncode=0)
+    output_calls = []
     complete_kwargs = {}
+
+    async def on_output(task_id, text):
+        output_calls.append(text)
 
     async def on_complete(task_id, **kwargs):
         complete_kwargs.update(kwargs)
 
     with patch("backend.executor.create_worktree", new_callable=AsyncMock) as mock_create_wt, \
-         patch("asyncio.create_subprocess_exec", return_value=fake_proc):
+         patch("asyncio.create_subprocess_exec", return_value=fake_proc), \
+         patch("backend.executor.shutil.which", return_value="/usr/bin/claude"):
         mock_create_wt.return_value = "/fake/worktree"
         task = make_task()
-        await executor.execute_task(task, AsyncMock(), on_complete)
+        await executor.execute_task(task, on_output, on_complete)
 
-    assert complete_kwargs["output"] == "plain text output"
-    assert complete_kwargs["input_tokens"] is None
-    assert complete_kwargs["cost_usd"] is None
+    # Non-JSON lines are streamed as-is via on_output
+    assert "plain text output" in output_calls
+    # No result event means output is "(no output)" or stderr
+    assert complete_kwargs["exit_code"] == 0
 
 
 async def test_plan_section_extracted(executor):
     result_with_plan = "Here is my plan\n---PLAN END---\nHere is the implementation"
-    output_data = json.dumps({
-        "result": result_with_plan,
-        "usage": {"input_tokens": 10, "output_tokens": 5},
-        "total_cost_usd": 0.0001,
-    })
-    fake_proc = FakeProcess(stdout_lines=[output_data], returncode=0)
+    ndjson_lines = [
+        make_assistant_event("planning..."),
+        make_result_event(result=result_with_plan, input_tokens=10, output_tokens=5, cost=0.0001),
+    ]
+    fake_proc = FakeProcess(stdout_lines=ndjson_lines, returncode=0)
     complete_kwargs = {}
 
     async def on_complete(task_id, **kwargs):
         complete_kwargs.update(kwargs)
 
     with patch("backend.executor.create_worktree", new_callable=AsyncMock) as mock_create_wt, \
-         patch("asyncio.create_subprocess_exec", return_value=fake_proc):
+         patch("asyncio.create_subprocess_exec", return_value=fake_proc), \
+         patch("backend.executor.shutil.which", return_value="/usr/bin/claude"):
         mock_create_wt.return_value = "/fake/worktree"
         task = make_task()
         await executor.execute_task(task, AsyncMock(), on_complete)
 
     assert complete_kwargs["plan"] == "Here is my plan"
+
+
+async def test_tool_use_events_stream_summaries(executor):
+    """Tool use events produce human-readable summaries."""
+    ndjson_lines = [
+        make_tool_use_event("Bash", {"command": "npm test"}),
+        make_tool_use_event("Edit", {"file_path": "/src/main.py"}),
+        make_tool_use_event("Read", {"file_path": "/README.md"}),
+        make_result_event(result="done"),
+    ]
+    fake_proc = FakeProcess(stdout_lines=ndjson_lines, returncode=0)
+    output_calls = []
+
+    async def on_output(task_id, text):
+        output_calls.append(text)
+
+    with patch("backend.executor.create_worktree", new_callable=AsyncMock) as mock_create_wt, \
+         patch("asyncio.create_subprocess_exec", return_value=fake_proc), \
+         patch("backend.executor.shutil.which", return_value="/usr/bin/claude"):
+        mock_create_wt.return_value = "/fake/worktree"
+        task = make_task()
+        await executor.execute_task(task, on_output, AsyncMock())
+
+    assert any("Running: npm test" in c for c in output_calls)
+    assert any("Edit: /src/main.py" in c for c in output_calls)
+    assert any("Reading: /README.md" in c for c in output_calls)
 
 
 async def test_cancel_task_terminates_process(executor):
@@ -222,7 +342,8 @@ async def test_failed_task_cleans_up_worktree(executor):
     with patch("backend.executor.create_worktree", new_callable=AsyncMock) as mock_create_wt, \
          patch("backend.executor.remove_worktree", new_callable=AsyncMock) as mock_remove_wt, \
          patch("backend.executor.cleanup_branch", new_callable=AsyncMock) as mock_cleanup_br, \
-         patch("asyncio.create_subprocess_exec", return_value=fake_proc):
+         patch("asyncio.create_subprocess_exec", return_value=fake_proc), \
+         patch("backend.executor.shutil.which", return_value="/usr/bin/claude"):
         mock_create_wt.return_value = "/fake/worktree"
         task = make_task(task_id=7)
         await executor.execute_task(task, AsyncMock(), on_complete)

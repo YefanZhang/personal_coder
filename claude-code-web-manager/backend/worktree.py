@@ -31,6 +31,9 @@ async def create_worktree(
 ) -> str:
     """Create a git worktree with a new branch.
 
+    If the branch already exists (e.g. from a previous failed/retried task),
+    cleans up the stale branch and worktree directory, then retries.
+
     Args:
         base_repo: Path to the main git repository.
         branch: Branch name to create.
@@ -50,8 +53,40 @@ async def create_worktree(
         cwd=base_repo,
     )
     if rc != 0:
+        # Branch already exists — clean up stale state and retry
+        if "already exists" in stderr:
+            await _cleanup_stale_branch(base_repo, branch, path)
+            stdout, stderr, rc = await _run_git(
+                "worktree", "add", "-b", branch, path,
+                cwd=base_repo,
+            )
+            if rc != 0:
+                raise WorktreeError(f"worktree creation failed after cleanup: {stderr.strip()}")
+            return path
         raise WorktreeError(f"worktree creation failed: {stderr.strip()}")
     return path
+
+
+async def _cleanup_stale_branch(
+    base_repo: str,
+    branch: str,
+    path: str,
+) -> None:
+    """Remove a stale branch and any associated worktree so it can be recreated.
+
+    This handles the case where a previous task attempt left behind a branch
+    (and possibly a worktree directory) that wasn't fully cleaned up.
+    """
+    # Remove the worktree directory if it still exists
+    if Path(path).exists():
+        shutil.rmtree(path, ignore_errors=True)
+
+    # Prune worktree records that point to missing directories
+    await _run_git("worktree", "prune", cwd=base_repo)
+
+    # Force-delete the branch (may fail if still checked out — that's ok,
+    # prune above should have fixed that)
+    await _run_git("branch", "-D", branch, cwd=base_repo)
 
 
 async def remove_worktree(

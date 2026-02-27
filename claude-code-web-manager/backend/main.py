@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import shutil
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -19,8 +20,9 @@ from backend.models import Task, TaskStatus, TaskMode, CreateTaskRequest
 db = Database(db_path=os.getenv("DB_PATH", "tasks.db"))
 executor = ClaudeCodeExecutor(
     max_workers=int(os.getenv("MAX_WORKERS", "3")),
-    base_repo=os.getenv("BASE_REPO", "/home/ubuntu/project"),
+    base_repo=os.getenv("BASE_REPO", "/home/ubuntu/personal_coder"),
     log_dir=os.getenv("LOG_DIR", "/home/ubuntu/task-logs"),
+    worktree_dir=os.getenv("WORKTREE_DIR", "/home/ubuntu/personal_coder-worktrees"),
 )
 registry = TaskRegistry(
     registry_path=os.getenv("REGISTRY_PATH", os.path.join(
@@ -99,6 +101,11 @@ async def _recover_stuck_tasks() -> None:
 async def lifespan(app: FastAPI):
     await db.init()
     await _recover_stuck_tasks()
+    claude_path = shutil.which("claude")
+    if claude_path:
+        print(f"[startup] claude CLI found at {claude_path}")
+    else:
+        print("[startup] WARNING: claude CLI not found in PATH — tasks will fail")
     registry.load_cli_tasks()
     await _sync_registry()
     scheduler_task = asyncio.create_task(scheduler.start())
