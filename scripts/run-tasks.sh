@@ -58,10 +58,10 @@ count_pending() {
   python3 -c "
 import json, sys
 with open('$TASKS_FILE') as f:
-    tasks = json.load(f).get('tasks', json.load(open('$TASKS_FILE')))
-if isinstance(tasks, dict):
-    tasks = tasks.get('tasks', [])
-print(sum(1 for t in tasks if t.get('status') == 'pending'))
+    data = json.load(f)
+tasks = data.get('tasks', data) if isinstance(data, dict) else data
+# Only count CLI tasks (ignore web manager tasks)
+print(sum(1 for t in tasks if t.get('status') == 'pending' and t.get('source', 'cli') == 'cli'))
 "
 }
 
@@ -71,12 +71,14 @@ import json
 with open('$TASKS_FILE') as f:
     data = json.load(f)
 tasks = data.get('tasks', data) if isinstance(data, dict) else data
-print(sum(1 for t in tasks if t.get('status') == 'in_progress'))
+# Only count CLI tasks (ignore web manager tasks)
+print(sum(1 for t in tasks if t.get('status') == 'in_progress' and t.get('source', 'cli') == 'cli'))
 "
 }
 
 recover_stale_tasks() {
-  # Reset any in_progress tasks back to pending (crash recovery)
+  # Reset any in_progress CLI tasks back to pending (crash recovery)
+  # Web tasks are managed by the web manager, not this orchestrator
   local stale
   stale=$(count_in_progress)
   if [ "$stale" -gt 0 ]; then
@@ -87,7 +89,7 @@ with open('$TASKS_FILE', 'r') as f:
     data = json.load(f)
 tasks = data.get('tasks', data)
 for t in tasks:
-    if t.get('status') == 'in_progress':
+    if t.get('status') == 'in_progress' and t.get('source', 'cli') == 'cli':
         t['status'] = 'pending'
 with open('$TASKS_FILE', 'w') as f:
     json.dump(data, f, indent=2)
@@ -103,8 +105,9 @@ import json
 with open('$TASKS_FILE') as f:
     data = json.load(f)
 tasks = data.get('tasks', data) if isinstance(data, dict) else data
+# Only pick CLI tasks (ignore web manager tasks)
 for t in tasks:
-    if t.get('status') == 'pending':
+    if t.get('status') == 'pending' and t.get('source', 'cli') == 'cli':
         print(t['id'])
         break
 "

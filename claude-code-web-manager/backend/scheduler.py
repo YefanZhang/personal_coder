@@ -1,18 +1,28 @@
 import asyncio
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 from backend.models import TaskStatus, TaskMode
 
 
 class TaskScheduler:
-    def __init__(self, executor, db, ws_manager, max_concurrent: int = 3, poll_interval: float = 2.0):
+    def __init__(self, executor, db, ws_manager, max_concurrent: int = 3, poll_interval: float = 2.0,
+                 on_state_change: Optional[Callable] = None):
         self.executor = executor
         self.db = db
         self.ws_manager = ws_manager
         self.max_concurrent = max_concurrent
         self.poll_interval = poll_interval
         self._running = False
+        self._on_state_change = on_state_change
+
+    async def _notify_state_change(self) -> None:
+        """Call the state change callback if set."""
+        if self._on_state_change is not None:
+            try:
+                await self._on_state_change()
+            except Exception as e:
+                print(f"[scheduler] state change callback error: {e}")
 
     async def start(self):
         self._running = True
@@ -56,6 +66,7 @@ class TaskScheduler:
         await self.ws_manager.broadcast(
             task.id, {"type": "status", "status": TaskStatus.IN_PROGRESS}
         )
+        await self._notify_state_change()
         asyncio.create_task(
             self.executor.execute_task(task, self._on_output, self._on_complete)
         )
@@ -91,6 +102,7 @@ class TaskScheduler:
         await self.ws_manager.broadcast(
             task_id, {"type": "complete", "status": status}
         )
+        await self._notify_state_change()
 
     async def cancel_task(self, task_id: int) -> None:
         await self.executor.cancel_task(task_id)

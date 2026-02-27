@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     depends_on TEXT DEFAULT '[]',
     repo_path TEXT,
     tags TEXT DEFAULT '[]',
+    created_by TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     started_at TIMESTAMP,
     completed_at TIMESTAMP
@@ -77,6 +78,15 @@ class Database:
         await self._conn.executescript(SCHEMA_SQL)
         await self._conn.execute("PRAGMA foreign_keys = ON")
         await self._conn.commit()
+        await self._migrate_schema()
+
+    async def _migrate_schema(self):
+        """Add columns that may be missing from older databases."""
+        try:
+            await self._conn.execute("ALTER TABLE tasks ADD COLUMN created_by TEXT")
+            await self._conn.commit()
+        except Exception:
+            pass  # Column already exists
 
     async def close(self):
         if self._conn:
@@ -92,11 +102,12 @@ class Database:
         depends_on: list[int] = [],
         repo_path: Optional[str] = None,
         tags: list[str] = [],
+        created_by: Optional[str] = None,
     ) -> Task:
         async with self._conn.execute(
             """
-            INSERT INTO tasks (title, prompt, mode, priority, depends_on, repo_path, tags)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (title, prompt, mode, priority, depends_on, repo_path, tags, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 title,
@@ -106,6 +117,7 @@ class Database:
                 json.dumps(depends_on),
                 repo_path,
                 json.dumps(tags),
+                created_by,
             ),
         ) as cursor:
             task_id = cursor.lastrowid

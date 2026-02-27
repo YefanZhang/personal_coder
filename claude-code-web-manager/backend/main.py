@@ -4,13 +4,14 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
 from backend.database import Database
 from backend.executor import ClaudeCodeExecutor
 from backend.scheduler import TaskScheduler
+from backend.task_registry import TaskRegistry
 from backend.models import Task, TaskStatus, TaskMode, CreateTaskRequest
 
 # ── Singletons ────────────────────────────────────────────────────────────────
@@ -20,6 +21,11 @@ executor = ClaudeCodeExecutor(
     max_workers=int(os.getenv("MAX_WORKERS", "3")),
     base_repo=os.getenv("BASE_REPO", "/home/ubuntu/project"),
     log_dir=os.getenv("LOG_DIR", "/home/ubuntu/task-logs"),
+)
+registry = TaskRegistry(
+    registry_path=os.getenv("REGISTRY_PATH", os.path.join(
+        os.path.dirname(__file__), "..", "..", "data", "dev-tasks.json"
+    ))
 )
 
 API_KEY = os.getenv("API_KEY", "")
@@ -55,11 +61,25 @@ class ConnectionManager:
 
 
 ws_manager = ConnectionManager()
+
+
+# ── Registry sync helper ─────────────────────────────────────────────────────
+
+async def _sync_registry() -> None:
+    """Read all DB tasks and sync to dev-tasks.json."""
+    try:
+        tasks = await db.list_tasks()
+        await registry.sync(tasks)
+    except Exception as e:
+        print(f"[registry] sync error: {e}")
+
+
 scheduler = TaskScheduler(
     executor=executor,
     db=db,
     ws_manager=ws_manager,
     max_concurrent=int(os.getenv("MAX_CONCURRENT", "3")),
+    on_state_change=_sync_registry,
 )
 
 
@@ -79,6 +99,8 @@ async def _recover_stuck_tasks() -> None:
 async def lifespan(app: FastAPI):
     await db.init()
     await _recover_stuck_tasks()
+    registry.load_cli_tasks()
+    await _sync_registry()
     scheduler_task = asyncio.create_task(scheduler.start())
     yield
     scheduler.stop()
@@ -106,7 +128,8 @@ async def health():
 # ── Tasks ─────────────────────────────────────────────────────────────────────
 
 @app.post("/api/tasks", dependencies=[Depends(verify_api_key)], status_code=201)
-async def create_task(req: CreateTaskRequest):
+async def create_task(req: CreateTaskRequest, request: Request):
+    created_by = request.client.host if request.client else None
     task = await db.create_task(
         title=req.title,
         prompt=req.prompt,
@@ -115,12 +138,15 @@ async def create_task(req: CreateTaskRequest):
         depends_on=req.depends_on,
         repo_path=req.repo_path,
         tags=req.tags,
+        created_by=created_by,
     )
+    await _sync_registry()
     return task
 
 
 @app.post("/api/tasks/batch", dependencies=[Depends(verify_api_key)], status_code=201)
-async def create_tasks_batch(reqs: list[CreateTaskRequest]):
+async def create_tasks_batch(reqs: list[CreateTaskRequest], request: Request):
+    created_by = request.client.host if request.client else None
     tasks = []
     for req in reqs:
         task = await db.create_task(
@@ -131,8 +157,10 @@ async def create_tasks_batch(reqs: list[CreateTaskRequest]):
             depends_on=req.depends_on,
             repo_path=req.repo_path,
             tags=req.tags,
+            created_by=created_by,
         )
         tasks.append(task)
+    await _sync_registry()
     return tasks
 
 
@@ -165,6 +193,7 @@ async def cancel_task(task_id: int):
         raise HTTPException(status_code=404, detail="Task not found")
     await scheduler.cancel_task(task_id)
     await db.update_task(task_id, status=TaskStatus.CANCELLED)
+    await _sync_registry()
     return {"status": "cancelled"}
 
 
@@ -174,6 +203,7 @@ async def retry_task(task_id: int):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     await db.update_task(task_id, status=TaskStatus.PENDING, error=None)
+    await _sync_registry()
     return {"status": "pending"}
 
 
@@ -183,6 +213,7 @@ async def approve_plan(task_id: int):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     await db.update_task(task_id, status=TaskStatus.PENDING, mode=TaskMode.EXECUTE.value)
+    await _sync_registry()
     return {"status": "pending"}
 
 
@@ -192,6 +223,7 @@ async def delete_task(task_id: int):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     await db.delete_task(task_id)
+    await _sync_registry()
     return {"status": "deleted"}
 
 

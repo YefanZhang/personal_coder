@@ -54,6 +54,7 @@ class Task(BaseModel):
 
     repo_path: Optional[str] = None
     tags: list[str] = []
+    created_by: Optional[str] = None
 
 
 class TaskLog(BaseModel):
