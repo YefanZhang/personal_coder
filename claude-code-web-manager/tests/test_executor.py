@@ -64,6 +64,22 @@ def make_result_event(result="", input_tokens=100, output_tokens=50, cost=0.001)
     })
 
 
+class FakeStdout:
+    """Mock stdout that supports `.read(n)` returning chunks then b""."""
+
+    def __init__(self, data: bytes):
+        self._data = data
+        self._pos = 0
+
+    async def read(self, n: int = -1) -> bytes:
+        if self._pos >= len(self._data):
+            return b""
+        end = len(self._data) if n < 0 else min(self._pos + n, len(self._data))
+        chunk = self._data[self._pos:end]
+        self._pos = end
+        return chunk
+
+
 class FakeProcess:
     """Minimal asyncio.subprocess.Process mock."""
 
@@ -72,18 +88,12 @@ class FakeProcess:
         self.pid = 12345
         self._stdout_lines = stdout_lines
         self._stderr = stderr.encode()
-        self.stdout = self._make_reader()
+        # Build raw bytes: each line terminated by \n, as NDJSON would be
+        self.stdout = FakeStdout(
+            b"".join((line + "\n").encode() for line in stdout_lines)
+        )
         self.stderr = AsyncMock()
         self.stderr.read = AsyncMock(return_value=self._stderr)
-
-    def _make_reader(self):
-        async def _aiter():
-            for line in self._stdout_lines:
-                yield (line + "\n").encode()
-
-        reader = MagicMock()
-        reader.__aiter__ = lambda self: _aiter()
-        return reader
 
     async def communicate(self):
         stdout = b"\n".join(l.encode() for l in self._stdout_lines)

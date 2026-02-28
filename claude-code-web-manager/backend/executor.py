@@ -123,71 +123,56 @@ The main repository is at: {self.base_repo}
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=self._build_subprocess_env(),
-                limit=1_048_576,  # 1 MB buffer; default 64KB overflows on large NDJSON lines
             )
             self.active_tasks[task.id] = process
             print(f"[executor] task {task.id}: subprocess started (pid={process.pid})")
 
             # 5. Stream NDJSON stdout line-by-line, parse each event
             log_path = self.log_dir / f"task-{task.id}.log"
-            result_text: Optional[str] = None
-            input_tokens: Optional[int] = None
-            output_tokens: Optional[int] = None
-            cost_usd: Optional[float] = None
-            plan_text: Optional[str] = None
+            parsed: dict = {}  # populated by _process_ndjson_line
 
             with open(log_path, "w") as log_file:
-                async for raw_line in process.stdout:
-                    decoded = raw_line.decode().rstrip("\n")
-                    if not decoded:
-                        continue
+                # Read raw chunks instead of lines to avoid asyncio's 64KB
+                # StreamReader limit.  NDJSON lines can be arbitrarily large
+                # (e.g. when Claude reads a big file, the JSON event for that
+                # read can exceed 64KB).  We accumulate chunks in a buffer and
+                # split on newlines ourselves — no upper bound on line length.
+                buf = b""
+                while True:
+                    chunk = await process.stdout.read(65536)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    while b"\n" in buf:
+                        raw_line, buf = buf.split(b"\n", 1)
+                        decoded = raw_line.decode().rstrip()
+                        if not decoded:
+                            continue
+                        log_file.write(decoded + "\n")
+                        log_file.flush()
+                        await self._process_ndjson_line(
+                            decoded, task.id, on_output, parsed,
+                        )
+
+                # Flush any trailing data without a final newline
+                if buf.strip():
+                    decoded = buf.decode().rstrip()
                     log_file.write(decoded + "\n")
                     log_file.flush()
-
-                    # Parse each NDJSON line
-                    try:
-                        event = json.loads(decoded)
-                    except json.JSONDecodeError:
-                        await on_output(task.id, decoded)
-                        continue
-
-                    event_type = event.get("type")
-
-                    if event_type == "assistant":
-                        # Extract text content from assistant message for streaming
-                        msg = event.get("message", {})
-                        for block in msg.get("content", []):
-                            if block.get("type") == "text":
-                                text = block["text"]
-                                await on_output(task.id, text)
-                            elif block.get("type") == "tool_use":
-                                tool_name = block.get("name", "tool")
-                                tool_input = block.get("input", {})
-                                summary = f"[Using {tool_name}]"
-                                if tool_name == "Bash" and "command" in tool_input:
-                                    summary = f"[Running: {tool_input['command'][:100]}]"
-                                elif tool_name in ("Edit", "Write") and "file_path" in tool_input:
-                                    summary = f"[{tool_name}: {tool_input['file_path']}]"
-                                elif tool_name == "Read" and "file_path" in tool_input:
-                                    summary = f"[Reading: {tool_input['file_path']}]"
-                                await on_output(task.id, summary)
-
-                    elif event_type == "result":
-                        # Final result with usage and cost
-                        result_text = event.get("result", "")
-                        cost_usd = event.get("total_cost_usd")
-                        usage = event.get("usage", {})
-                        input_tokens = usage.get("input_tokens")
-                        output_tokens = usage.get("output_tokens")
-
-                    elif event_type == "system":
-                        model = event.get("model", "unknown")
-                        await on_output(task.id, f"[Session started — model: {model}]")
+                    await self._process_ndjson_line(
+                        decoded, task.id, on_output, parsed,
+                    )
 
             # 6. Wait for process and collect stderr
             await process.wait()
             stderr_bytes = await process.stderr.read()
             stderr = stderr_bytes.decode()
+
+            result_text = parsed.get("result_text")
+            input_tokens = parsed.get("input_tokens")
+            output_tokens = parsed.get("output_tokens")
+            cost_usd = parsed.get("cost_usd")
+            plan_text = parsed.get("plan_text")
 
             if result_text is None:
                 result_text = stderr or "(no output)"
@@ -196,8 +181,7 @@ The main repository is at: {self.base_repo}
 
             # Extract plan section if present
             if "---PLAN END---" in result_text:
-                parts = result_text.split("---PLAN END---", 1)
-                plan_text = parts[0].strip()
+                plan_text = result_text.split("---PLAN END---", 1)[0].strip()
 
             self.active_tasks.pop(task.id, None)
 
@@ -222,6 +206,50 @@ The main repository is at: {self.base_repo}
             self.active_tasks.pop(task.id, None)
             await self._cleanup_worktree(task.id)
             await on_complete(task.id, exit_code=1, error=f"execution failed: {e}")
+
+    async def _process_ndjson_line(
+        self,
+        decoded: str,
+        task_id: int,
+        on_output: Callable,
+        parsed: dict,
+    ) -> None:
+        """Parse a single NDJSON line and dispatch to on_output / collect results."""
+        try:
+            event = json.loads(decoded)
+        except json.JSONDecodeError:
+            await on_output(task_id, decoded)
+            return
+
+        event_type = event.get("type")
+
+        if event_type == "assistant":
+            msg = event.get("message", {})
+            for block in msg.get("content", []):
+                if block.get("type") == "text":
+                    await on_output(task_id, block["text"])
+                elif block.get("type") == "tool_use":
+                    tool_name = block.get("name", "tool")
+                    tool_input = block.get("input", {})
+                    summary = f"[Using {tool_name}]"
+                    if tool_name == "Bash" and "command" in tool_input:
+                        summary = f"[Running: {tool_input['command'][:100]}]"
+                    elif tool_name in ("Edit", "Write") and "file_path" in tool_input:
+                        summary = f"[{tool_name}: {tool_input['file_path']}]"
+                    elif tool_name == "Read" and "file_path" in tool_input:
+                        summary = f"[Reading: {tool_input['file_path']}]"
+                    await on_output(task_id, summary)
+
+        elif event_type == "result":
+            parsed["result_text"] = event.get("result", "")
+            parsed["cost_usd"] = event.get("total_cost_usd")
+            usage = event.get("usage", {})
+            parsed["input_tokens"] = usage.get("input_tokens")
+            parsed["output_tokens"] = usage.get("output_tokens")
+
+        elif event_type == "system":
+            model = event.get("model", "unknown")
+            await on_output(task_id, f"[Session started — model: {model}]")
 
     async def cancel_task(self, task_id: int) -> None:
         proc = self.active_tasks.get(task_id)
