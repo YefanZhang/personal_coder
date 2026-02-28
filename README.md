@@ -34,17 +34,19 @@ Create a `.env` file in `claude-code-web-manager/`:
 # Required — path to the git repo Claude will work in
 BASE_REPO=/home/you/your-project
 
-# Optional
-DB_PATH=tasks.db                   # SQLite database location (default: tasks.db)
-LOG_DIR=/home/you/task-logs        # Task log directory (default: /home/ubuntu/task-logs)
-MAX_CONCURRENT=3                   # Max parallel tasks (default: 3)
-API_KEY=                           # API key for auth; leave empty to disable
+# Optional (defaults shown)
+DB_PATH=tasks.db                                  # SQLite database location
+LOG_DIR=/home/you/task-logs                       # Task execution log directory
+WORKTREE_DIR=/home/you/your-project-worktrees     # Git worktree directory
+MAX_CONCURRENT=3                                  # Max parallel tasks
+API_KEY=                                          # API key for auth; leave empty to disable
 ```
 
-Make sure the `LOG_DIR` exists:
+Make sure the log and worktree directories exist:
 
 ```bash
 mkdir -p /home/you/task-logs
+mkdir -p /home/you/your-project-worktrees
 ```
 
 ### 4. Start the server
