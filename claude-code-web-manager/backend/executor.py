@@ -123,6 +123,7 @@ The main repository is at: {self.base_repo}
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=self._build_subprocess_env(),
+                limit=1_048_576,  # 1 MB buffer; default 64KB overflows on large NDJSON lines
             )
             self.active_tasks[task.id] = process
             print(f"[executor] task {task.id}: subprocess started (pid={process.pid})")
