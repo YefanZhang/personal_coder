@@ -1,92 +1,9 @@
 {
-  "tasks": [
-    {
-      "id": "p1-001",
-      "title": "Project scaffold and database layer",
-      "status": "done",
-      "priority": "high",
-      "phase": 1,
-      "description": "Create the claude-code-web-manager project structure. Set up pyproject.toml with uv, implement database.py (Database class with all methods from plan Section 5.0), models.py (Task, TaskStatus, TaskMode, TaskPriority, TaskLog Pydantic models), and SQLite schema with indexes. Include startup recovery logic (_recover_stuck_tasks). Write tests/test_database.py covering: init, create_task, get_task, list_tasks, update_task, count_tasks, get_next_pending_task priority ordering, add_log, get_task_logs, delete_task cascade, and startup recovery resetting in_progress→pending."
-    },
-    {
-      "id": "p1-002",
-      "title": "Task executor engine (subprocess)",
-      "status": "done",
-      "priority": "high",
-      "phase": 1,
-      "description": "Implement backend/executor.py using asyncio.create_subprocess_exec. Must: (1) create git worktree before running claude, (2) call `claude -p <prompt> --dangerously-skip-permissions --output-format json`, (3) stream stdout line-by-line calling on_output callback, (4) write full output to /home/ubuntu/task-logs/task-{id}.log, (5) parse JSON output for result text + token usage (input_tokens, output_tokens, cost_usd), (6) handle Plan mode via prompt prefix (no --plan flag — it does not exist), (7) call on_complete with all fields including tokens. Write tests/test_executor.py with subprocess mocked."
-    },
-    {
-      "id": "p1-003",
-      "title": "Task scheduler",
-      "status": "done",
-      "priority": "high",
-      "phase": 1,
-      "description": "Implement backend/scheduler.py: async polling loop every 2s, respects max_concurrent limit, checks depends_on via async _dependencies_met(), dispatches via asyncio.create_task, handles _on_output (ws broadcast + db log) and _on_complete (db update with token fields + ws broadcast). Write tests/test_scheduler.py: priority ordering test, dependency blocking test, concurrent limit test, all with mocked executor and db."
-    },
-    {
-      "id": "p1-004",
-      "title": "FastAPI backend with all REST endpoints",
-      "status": "done",
-      "priority": "high",
-      "phase": 1,
-      "description": "Implement backend/main.py using asynccontextmanager lifespan (NOT deprecated @app.on_event). Include: GET /api/health, POST /api/tasks, POST /api/tasks/batch, GET /api/tasks, GET /api/tasks/{id}, GET /api/tasks/{id}/logs, POST /api/tasks/{id}/cancel, POST /api/tasks/{id}/retry, POST /api/tasks/{id}/approve-plan, DELETE /api/tasks/{id}, WebSocket /ws with dead-connection cleanup in broadcast(). Add X-API-Key auth via FastAPI Depends (reads API_KEY from env, skips check if empty). Implement ConnectionManager.broadcast() with dead-connection cleanup. Write tests/test_api.py using FastAPI TestClient covering all endpoints."
-    },
-    {
-      "id": "p1-005",
-      "title": "Simple HTML MVP frontend (table view)",
-      "status": "done",
-      "priority": "medium",
-      "phase": 1,
-      "description": "Create frontend/index.html as a single-file SPA (no build step). Must include: task creation form (title, prompt textarea, priority select, Cmd+Enter submit), task list as HTML table showing id/title/status/priority/cost_usd/created_at, WebSocket client that updates table in real time on task status changes, and a footer showing cumulative token cost. No kanban yet — that's Phase 3. Keep it minimal and functional."
-    },
-    {
-      "id": "p2-001",
-      "title": "Git worktree lifecycle management",
-      "status": "done",
-      "priority": "high",
-      "phase": 2,
-      "description": "Implement backend/worktree.py with: async create_worktree(base_repo, branch, path), async remove_worktree(base_repo, path), async merge_worktree(base_repo, branch). Update executor.py to call these. Add worktree cleanup on task cancel and task failure. Test parallel execution: create 3 tasks simultaneously, verify 3 separate worktrees exist, all complete independently. Add a scripts/launcher.sh that reads a newline-delimited list of prompts and POSTs them to /api/tasks/batch."
-    },
-    {
-      "id": "p2-002",
-      "title": "Concurrency stress test and race condition fixes",
-      "status": "done",
-      "priority": "medium",
-      "phase": 2,
-      "description": "Create a test that fires 5 tasks simultaneously with max_concurrent=3. Verify: (a) never more than 3 tasks in_progress at once, (b) tasks 4 and 5 stay pending until a slot opens, (c) all 5 complete eventually, (d) no DB corruption. Fix any race conditions found. Also test: server crash simulation — manually set 2 tasks to in_progress in DB, restart server, confirm they reset to pending (startup recovery test)."
-    },
-    {
-      "id": "p3-001",
-      "title": "React kanban board with WebSocket real-time updates",
-      "status": "done",
-      "priority": "medium",
-      "phase": 3,
-      "description": "Replace the Phase 1 table frontend with a full kanban board in frontend/index.html (single-file React via CDN, no build step). Columns: pending, in_progress, review, completed, failed, cancelled. Each task card shows: title, priority badge, cost_usd, time elapsed (for in_progress). Clicking a card opens a side panel showing task logs (fetched from GET /api/tasks/{id}/logs, then streamed via WebSocket). WebSocket events update card position in real time. Include cancel/retry buttons on appropriate cards."
-    },
-    {
-      "id": "p3-002",
-      "title": "Task creation form with Plan mode and voice input",
-      "status": "done",
-      "priority": "low",
-      "phase": 3,
-      "description": "Enhance the task creation form: (1) Plan mode checkbox — when checked, prepend the standard plan-mode prefix to the prompt before submitting (document that --plan flag does not exist, this is purely prompt engineering), (2) depends_on multi-select dropdown populated from existing tasks, (3) voice input button using Web Speech API (browser SpeechRecognition), (4) task template dropdown to save/load common prompts (stored in localStorage), (5) Cmd+Enter / Ctrl+Enter submit shortcut."
-    },
-    {
-      "id": "p3-003",
-      "title": "PWA manifest and service worker",
-      "status": "done",
-      "priority": "low",
-      "phase": 3,
-      "description": "Add frontend/manifest.json (name, short_name, start_url, display: standalone, icons) and frontend/sw.js (basic cache-first service worker for offline shell). Update index.html to link manifest and register SW. Test: Safari on iPhone — 'Add to Home Screen' should show app icon and launch in standalone mode without browser chrome."
-    },
-    {
-      "id": "p4-001",
-      "title": "E2E Playwright test suite",
-      "status": "done",
-      "priority": "medium",
-      "phase": 4,
-      "description": "Create tests/e2e/test_kanban.py. Using MCP Playwright tools (browser_navigate, browser_click, browser_fill, browser_wait_for, browser_screenshot): (1) navigate to http://localhost:8000, (2) create a task via form, (3) assert card appears in pending column, (4) assert GET /api/health returns 200, (5) assert WebSocket connection established (check for ws:// request in network), (6) screenshot the kanban board. Document how to run: start server, then execute test file using pytest with playwright plugin."
-    }
-  ]
+  "meta": {
+    "last_synced_at": "2026-03-01T07:06:02.834845",
+    "total_cost_usd": 0,
+    "cli_tasks": 0,
+    "web_tasks": 0
+  },
+  "tasks": []
 }
