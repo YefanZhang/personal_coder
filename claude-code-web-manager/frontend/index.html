@@ -618,11 +618,13 @@
     }
 
     // -- SidePanel Component --
-    function SidePanel({ task, logs, streamingLogs, onClose, onCancel, onRetry, onDelete }) {
+    function SidePanel({ task, logs, plans, streamingLogs, onClose, onCancel, onRetry, onDelete, onApprovePlan, onRejectPlan }) {
       if (!task) return null;
 
       const logEndRef = useRef(null);
       const liveLogRef = useRef(null);
+      const [rejectFeedback, setRejectFeedback] = useState('');
+      const [showRejectForm, setShowRejectForm] = useState(false);
       const taskStreamLogs = streamingLogs[task.id] || [];
 
       useEffect(() => {
@@ -637,6 +639,7 @@
       const canCancel = task.status === 'pending' || task.status === 'in_progress';
       const canRetry = task.status === 'failed' || task.status === 'cancelled';
       const canDelete = task.status !== 'in_progress';
+      const isReview = task.status === 'review';
 
       return (
         <React.Fragment>
@@ -651,6 +654,7 @@
                 <label>Status</label>
                 <div className="value">
                   <span className={`badge badge-${task.status}`}>{task.status.replace('_', ' ')}</span>
+                  {task.mode === 'plan' && <span className="badge" style={{background: '#1c2d1c', color: '#3fb950', border: '1px solid #238636', marginLeft: 6, fontSize: 11}}>plan</span>}
                 </div>
               </div>
               <div className="task-detail">
@@ -697,6 +701,69 @@
                 <div className="task-detail">
                   <label>Error</label>
                   <div className="value" style={{color: '#f85149'}}>{task.error}</div>
+                </div>
+              )}
+
+              {/* Plan display for review status */}
+              {task.plan && (
+                <div className="task-detail">
+                  <label>Plan</label>
+                  <div className="prompt-text" style={{maxHeight: '300px', whiteSpace: 'pre-wrap'}}>{task.plan}</div>
+                </div>
+              )}
+
+              {/* Approve/Reject buttons for tasks in review */}
+              {isReview && (
+                <div className="panel-actions" style={{borderTop: '1px solid #238636', paddingTop: 12, marginTop: 8}}>
+                  <button
+                    style={{background: '#238636', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', cursor: 'pointer', fontWeight: 600}}
+                    onClick={() => onApprovePlan(task.id)}
+                  >Approve Plan</button>
+                  <button
+                    className="secondary"
+                    onClick={() => setShowRejectForm(!showRejectForm)}
+                  >{showRejectForm ? 'Cancel' : 'Reject Plan'}</button>
+                </div>
+              )}
+              {isReview && showRejectForm && (
+                <div style={{marginTop: 8}}>
+                  <textarea
+                    placeholder="Feedback — what should be changed?"
+                    value={rejectFeedback}
+                    onChange={e => setRejectFeedback(e.target.value)}
+                    style={{width: '100%', minHeight: 60, background: '#0d1117', color: '#e1e4e8', border: '1px solid #30363d', borderRadius: 6, padding: 8, fontSize: 13, resize: 'vertical'}}
+                  />
+                  <button
+                    className="danger"
+                    style={{marginTop: 6}}
+                    disabled={!rejectFeedback.trim()}
+                    onClick={() => {
+                      onRejectPlan(task.id, rejectFeedback.trim());
+                      setRejectFeedback('');
+                      setShowRejectForm(false);
+                    }}
+                  >Submit Rejection</button>
+                </div>
+              )}
+
+              {/* Plan history */}
+              {plans && plans.length > 1 && (
+                <div className="task-detail" style={{marginTop: 12}}>
+                  <label>Plan History ({plans.length} versions)</label>
+                  {plans.map((p, i) => (
+                    <div key={p.id} style={{marginTop: 8, padding: 8, background: '#161b22', borderRadius: 6, border: '1px solid #30363d'}}>
+                      <div style={{fontSize: 12, color: '#8b949e', marginBottom: 4}}>
+                        v{p.version} — {new Date(p.created_at).toLocaleString()}
+                        {p.feedback && <span style={{color: '#d29922'}}> (rejected)</span>}
+                      </div>
+                      <div className="prompt-text" style={{maxHeight: '120px', fontSize: 12}}>{p.plan_text}</div>
+                      {p.feedback && (
+                        <div style={{marginTop: 4, fontSize: 12, color: '#d29922'}}>
+                          Feedback: {p.feedback}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -778,21 +845,7 @@
       localStorage.setItem(TEMPLATE_KEY, JSON.stringify(templates));
     }
 
-    // -- Plan mode prompt prefix --
-    const PLAN_PREFIX = `You are in PLAN MODE. Do NOT execute any code changes yet.
-
-Instead:
-1. Analyze the request carefully
-2. Identify all files that need to be modified
-3. Outline the implementation steps in detail
-4. List potential risks or edge cases
-5. Present the plan for human review
-
-Only after the plan is approved will you proceed with execution.
-
----
-
-`;
+    // Plan mode: frontend only sends mode="plan", backend handles prompt assembly
 
     // -- CreateForm Component --
     function CreateForm({ onCreated, tasks }) {
@@ -815,10 +868,9 @@ Only after the plan is approved will you proceed with execution.
         if (!title.trim() || !prompt.trim() || submitting) return;
         setSubmitting(true);
         try {
-          const finalPrompt = planMode ? PLAN_PREFIX + prompt.trim() : prompt.trim();
           const body = {
             title: title.trim(),
-            prompt: finalPrompt,
+            prompt: prompt.trim(),
             priority,
             mode: planMode ? 'plan' : 'execute',
           };
@@ -1308,6 +1360,7 @@ Only after the plan is approved will you proceed with execution.
       const [selectedId, setSelectedId] = useState(null);
       const [selectedTask, setSelectedTask] = useState(null);
       const [logs, setLogs] = useState([]);
+      const [plans, setPlans] = useState([]);
       const [wsConnected, setWsConnected] = useState(false);
       const [streamingLogs, setStreamingLogs] = useState({});
       const [chatOpen, setChatOpen] = useState(false);
@@ -1336,6 +1389,7 @@ Only after the plan is approved will you proceed with execution.
           const data = await resp.json();
           setSelectedTask(data.task);
           setLogs(data.logs || []);
+          setPlans(data.plans || []);
         } catch (e) {
           console.error('Failed to fetch task detail:', e);
         }
@@ -1352,6 +1406,7 @@ Only after the plan is approved will you proceed with execution.
         setSelectedId(null);
         setSelectedTask(null);
         setLogs([]);
+        setPlans([]);
       }, []);
 
       // Actions
@@ -1372,6 +1427,22 @@ Only after the plan is approved will you proceed with execution.
         fetchTasks();
         handleClose();
       }, [fetchTasks, handleClose]);
+
+      const handleApprovePlan = useCallback(async (id) => {
+        await fetch(`${API}/tasks/${id}/approve-plan`, { method: 'POST' });
+        fetchTasks();
+        fetchTaskDetail(id);
+      }, [fetchTasks, fetchTaskDetail]);
+
+      const handleRejectPlan = useCallback(async (id, feedback) => {
+        await fetch(`${API}/tasks/${id}/reject-plan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ feedback }),
+        });
+        fetchTasks();
+        fetchTaskDetail(id);
+      }, [fetchTasks, fetchTaskDetail]);
 
       // WebSocket
       useEffect(() => {
@@ -1481,11 +1552,14 @@ Only after the plan is approved will you proceed with execution.
             <SidePanel
               task={selectedTask}
               logs={logs}
+              plans={plans}
               streamingLogs={streamingLogs}
               onClose={handleClose}
               onCancel={handleCancel}
               onRetry={handleRetry}
               onDelete={handleDelete}
+              onApprovePlan={handleApprovePlan}
+              onRejectPlan={handleRejectPlan}
             />
           )}
 

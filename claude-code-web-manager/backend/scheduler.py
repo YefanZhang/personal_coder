@@ -117,8 +117,15 @@ class TaskScheduler:
         output_tokens: Optional[int] = None,
         cost_usd: Optional[float] = None,
         plan: Optional[str] = None,
+        is_plan_mode: bool = False,
     ) -> None:
-        status = TaskStatus.COMPLETED if exit_code == 0 else TaskStatus.FAILED
+        if exit_code != 0:
+            status = TaskStatus.FAILED
+        elif is_plan_mode:
+            # Plan-mode tasks go to REVIEW for human approval
+            status = TaskStatus.REVIEW
+        else:
+            status = TaskStatus.COMPLETED
         await self.db.update_task(
             task_id,
             status=status,
@@ -131,6 +138,12 @@ class TaskScheduler:
             cost_usd=cost_usd,
             plan=plan,
         )
+        # Store plan version for history tracking
+        if plan and is_plan_mode:
+            try:
+                await self.db.add_plan(task_id, plan)
+            except Exception as e:
+                print(f"[scheduler] task {task_id}: failed to store plan version: {e}")
         await self.ws_manager.broadcast(
             task_id, {"type": "complete", "status": status}
         )

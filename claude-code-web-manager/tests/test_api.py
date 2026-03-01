@@ -209,12 +209,61 @@ async def test_approve_plan(app_with_db):
     client, db = app_with_db
     r = await client.post("/api/tasks", json={"title": "Plan", "prompt": "p", "mode": "plan"})
     task_id = r.json()["id"]
+    # Set plan text and status to review (as scheduler would)
+    await db.update_task(task_id, status=TaskStatus.REVIEW, plan="Step 1\nStep 2")
     resp = await client.post(f"/api/tasks/{task_id}/approve-plan")
     assert resp.status_code == 200
     updated = await db.get_task(task_id)
     assert updated.status == TaskStatus.PENDING
     from backend.models import TaskMode
     assert updated.mode == TaskMode.EXECUTE
+    # Plan text is preserved for execution context
+    assert updated.plan == "Step 1\nStep 2"
+
+
+# ── Reject plan ──────────────────────────────────────────────────────────────
+
+async def test_reject_plan(app_with_db):
+    client, db = app_with_db
+    r = await client.post("/api/tasks", json={"title": "Plan", "prompt": "original prompt", "mode": "plan"})
+    task_id = r.json()["id"]
+    await db.update_task(task_id, status=TaskStatus.REVIEW, plan="Bad plan")
+    resp = await client.post(
+        f"/api/tasks/{task_id}/reject-plan",
+        json={"feedback": "Please add error handling"},
+    )
+    assert resp.status_code == 200
+    updated = await db.get_task(task_id)
+    assert updated.status == TaskStatus.PENDING
+    from backend.models import TaskMode
+    assert updated.mode == TaskMode.PLAN
+    assert "Please add error handling" in updated.prompt
+    assert "original prompt" in updated.prompt
+    assert updated.plan is None
+
+
+async def test_reject_plan_not_found(app_with_db):
+    client, db = app_with_db
+    resp = await client.post("/api/tasks/99999/reject-plan", json={"feedback": "bad"})
+    assert resp.status_code == 404
+
+
+# ── Plan history ─────────────────────────────────────────────────────────────
+
+async def test_task_detail_includes_plans(app_with_db):
+    client, db = app_with_db
+    r = await client.post("/api/tasks", json={"title": "Plan", "prompt": "p", "mode": "plan"})
+    task_id = r.json()["id"]
+    await db.add_plan(task_id, "Plan v1")
+    await db.add_plan(task_id, "Plan v2")
+
+    resp = await client.get(f"/api/tasks/{task_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "plans" in data
+    assert len(data["plans"]) == 2
+    assert data["plans"][0]["version"] == 1
+    assert data["plans"][1]["version"] == 2
 
 
 # ── Delete task ───────────────────────────────────────────────────────────────

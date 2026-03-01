@@ -168,6 +168,33 @@ async def test_on_complete_failure():
     assert call_kwargs["error"] == "boom"
 
 
+# ── Plan mode goes to REVIEW ────────────────────────────────────────────────
+
+async def test_on_complete_plan_mode_sets_review_status():
+    scheduler, executor, ws = make_scheduler()
+    scheduler.db.add_plan = AsyncMock()
+    await scheduler._on_complete(
+        task_id=10, exit_code=0, output="plan text",
+        plan="the plan", is_plan_mode=True,
+    )
+    call_kwargs = scheduler.db.update_task.call_args.kwargs
+    assert call_kwargs["status"] == TaskStatus.REVIEW
+    assert call_kwargs["plan"] == "the plan"
+    # Plan version should be stored
+    scheduler.db.add_plan.assert_called_once_with(10, "the plan")
+
+
+async def test_on_complete_plan_mode_failure_still_fails():
+    scheduler, executor, ws = make_scheduler()
+    scheduler.db.add_plan = AsyncMock()
+    await scheduler._on_complete(
+        task_id=10, exit_code=1, error="fail",
+        plan=None, is_plan_mode=True,
+    )
+    call_kwargs = scheduler.db.update_task.call_args.kwargs
+    assert call_kwargs["status"] == TaskStatus.FAILED
+
+
 # ── cancel_task delegates to executor ────────────────────────────────────────
 
 async def test_cancel_task():

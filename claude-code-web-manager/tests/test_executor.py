@@ -207,10 +207,15 @@ async def test_plan_mode_prepends_prefix_to_prompt(executor):
         await executor.execute_task(task, AsyncMock(), AsyncMock())
 
     all_args = " ".join(str(a) for a in captured_cmd)
-    assert "IMPORTANT: Before writing any code" in all_args
-    # Workflow suffix should also be present
-    assert "Post-Implementation Workflow" in all_args
-    assert "git push origin main" in all_args
+    # Plan mode uses structured plan prompt
+    assert "PLAN MODE" in all_args
+    assert "Do NOT execute any code changes" in all_args
+    assert "Write a function" in all_args
+    # Plan mode should NOT have workflow suffix (no implementation)
+    assert "Post-Implementation Workflow" not in all_args
+    # Plan mode should have --max-turns 1
+    assert "--max-turns" in all_args
+    assert "1" in captured_cmd
 
 
 async def test_workflow_instructions_appended_to_prompt(executor):
@@ -273,7 +278,8 @@ async def test_non_json_output_streams_raw_text(executor):
     assert complete_kwargs["exit_code"] == 0
 
 
-async def test_plan_section_extracted(executor):
+async def test_plan_section_extracted_with_delimiter(executor):
+    """Backward compat: ---PLAN END--- delimiter still works in execute mode."""
     result_with_plan = "Here is my plan\n---PLAN END---\nHere is the implementation"
     ndjson_lines = [
         make_assistant_event("planning..."),
@@ -293,6 +299,54 @@ async def test_plan_section_extracted(executor):
         await executor.execute_task(task, AsyncMock(), on_complete)
 
     assert complete_kwargs["plan"] == "Here is my plan"
+
+
+async def test_plan_mode_entire_output_is_plan(executor):
+    """In plan mode, the entire result_text is treated as the plan."""
+    plan_output = "## Files to Modify\n- src/main.py\n\n## Steps\n1. Do X\n2. Do Y"
+    ndjson_lines = [
+        make_result_event(result=plan_output, input_tokens=10, output_tokens=5, cost=0.0001),
+    ]
+    fake_proc = FakeProcess(stdout_lines=ndjson_lines, returncode=0)
+    complete_kwargs = {}
+
+    async def on_complete(task_id, **kwargs):
+        complete_kwargs.update(kwargs)
+
+    with patch("backend.executor.create_worktree", new_callable=AsyncMock) as mock_create_wt, \
+         patch("asyncio.create_subprocess_exec", return_value=fake_proc), \
+         patch("backend.executor.shutil.which", return_value="/usr/bin/claude"):
+        mock_create_wt.return_value = "/fake/worktree"
+        task = make_task(mode=TaskMode.PLAN)
+        await executor.execute_task(task, AsyncMock(), on_complete)
+
+    assert complete_kwargs["plan"] == plan_output
+    assert complete_kwargs["is_plan_mode"] is True
+
+
+async def test_execute_mode_with_approved_plan(executor):
+    """Execute mode includes approved plan in the prompt."""
+    captured_cmd = []
+
+    async def fake_exec(*args, **kwargs):
+        captured_cmd.extend(args)
+        return FakeProcess(stdout_lines=[make_result_event()], returncode=0)
+
+    with patch("backend.executor.create_worktree", new_callable=AsyncMock) as mock_create_wt, \
+         patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+         patch("backend.executor.shutil.which", return_value="/usr/bin/claude"):
+        mock_create_wt.return_value = "/fake/worktree"
+        task = make_task(prompt="Build a widget")
+        # Simulate approved plan
+        task.plan = "Step 1: Create widget.py\nStep 2: Add tests"
+        await executor.execute_task(task, AsyncMock(), AsyncMock())
+
+    all_args = " ".join(str(a) for a in captured_cmd)
+    assert "Execute the following approved plan exactly" in all_args
+    assert "Step 1: Create widget.py" in all_args
+    assert "Build a widget" in all_args
+    # Should have workflow suffix in execute mode
+    assert "Post-Implementation Workflow" in all_args
 
 
 async def test_tool_use_events_stream_summaries(executor):

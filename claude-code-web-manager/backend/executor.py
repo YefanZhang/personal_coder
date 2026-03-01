@@ -67,16 +67,53 @@ class ClaudeCodeExecutor:
             return
 
         try:
-            # 2. Build prompt (Plan mode via prompt engineering, not --plan flag which doesn't exist)
+            # 2. Build prompt and command flags based on mode
             prompt = task.prompt
-            if task.mode == TaskMode.PLAN:
-                prompt = (
-                    "IMPORTANT: Before writing any code, output a detailed implementation "
-                    "plan as markdown. After the plan, write '---PLAN END---', then implement.\n\n"
-                ) + prompt
+            is_plan_mode = task.mode == TaskMode.PLAN
 
-            # Append git workflow instructions so claude handles commit/merge/push
-            workflow_suffix = f"""
+            if is_plan_mode:
+                # Plan-only pass: Claude should ONLY output a plan, no implementation
+                prompt = f"""You are in PLAN MODE. Do NOT execute any code changes, create files, or run commands.
+
+Your ONLY job is to analyze the request and produce an implementation plan.
+
+Output your plan in this format:
+
+## Files to Modify
+- path/to/file1.py — description of changes
+- path/to/file2.py — description of changes
+
+## Files to Create
+- path/to/new_file.py — purpose
+
+## Implementation Steps
+1. Step one description
+2. Step two description
+3. ...
+
+## Risks & Edge Cases
+- Risk or edge case 1
+- Risk or edge case 2
+
+## Estimated Complexity
+low | medium | high
+
+---
+
+Request: {prompt}"""
+            else:
+                # Execute mode: if there's an approved plan, include it as context
+                if task.plan:
+                    prompt = f"""Execute the following approved plan exactly.
+
+## Approved Plan
+{task.plan}
+
+## Original Request
+{prompt}"""
+
+                # Append git workflow instructions (only for execute mode)
+                workflow_suffix = f"""
 
 ## Post-Implementation Workflow
 IMPORTANT: You are being run by the Claude Code Web Manager, not the task orchestrator.
@@ -99,7 +136,7 @@ Your current branch is: {branch}
 Your working directory is: {worktree_path}
 The main repository is at: {self.base_repo}
 """
-            prompt = prompt + workflow_suffix
+                prompt = prompt + workflow_suffix
 
             # 3. Build command — resolve claude to absolute path
             claude_path = shutil.which("claude")
@@ -114,6 +151,10 @@ The main repository is at: {self.base_repo}
                 "--output-format", "stream-json",
                 "--verbose",
             ]
+
+            # Plan mode: limit turns so Claude only outputs the plan and stops
+            if is_plan_mode:
+                cmd.extend(["--max-turns", "1"])
 
             # 4. Launch subprocess
             print(f"[executor] task {task.id}: launching subprocess: {claude_path}")
@@ -179,8 +220,14 @@ The main repository is at: {self.base_repo}
 
             print(f"[executor] task {task.id}: subprocess exited (code={process.returncode}, result_len={len(result_text)}, stderr_len={len(stderr)})")
 
-            # Extract plan section if present
-            if "---PLAN END---" in result_text:
+            # Extract plan: in plan mode, the entire output IS the plan
+            # For backward compat, also handle ---PLAN END--- delimiter
+            if is_plan_mode and result_text:
+                if "---PLAN END---" in result_text:
+                    plan_text = result_text.split("---PLAN END---", 1)[0].strip()
+                else:
+                    plan_text = result_text.strip()
+            elif "---PLAN END---" in result_text:
                 plan_text = result_text.split("---PLAN END---", 1)[0].strip()
 
             self.active_tasks.pop(task.id, None)
@@ -200,6 +247,7 @@ The main repository is at: {self.base_repo}
                 output_tokens=output_tokens,
                 cost_usd=cost_usd,
                 plan=plan_text,
+                is_plan_mode=is_plan_mode,
             )
         except Exception as e:
             print(f"[executor] task {task.id}: unhandled exception: {e}")
