@@ -252,3 +252,162 @@ async def test_auth_required_when_api_key_set(app_with_db):
         assert resp2.status_code == 201
     finally:
         main_module.API_KEY = original_key
+
+
+# ── Side panel data tests ────────────────────────────────────────────────────
+
+async def test_get_task_detail_includes_multiple_logs(app_with_db):
+    """GET /api/tasks/{id} returns task with multiple log entries, as the
+    side panel needs to render the full log history."""
+    client, db = app_with_db
+    r = await client.post("/api/tasks", json={"title": "Multi-log", "prompt": "p"})
+    task_id = r.json()["id"]
+    await db.add_log(task_id, "info", "Starting task")
+    await db.add_log(task_id, "info", "Processing step 1")
+    await db.add_log(task_id, "error", "Something failed")
+    await db.add_log(task_id, "info", "Retrying step 1")
+
+    resp = await client.get(f"/api/tasks/{task_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["task"]["id"] == task_id
+    logs = data["logs"]
+    assert len(logs) == 4
+    assert logs[0]["message"] == "Starting task"
+    assert logs[0]["level"] == "info"
+    assert logs[2]["message"] == "Something failed"
+    assert logs[2]["level"] == "error"
+
+
+async def test_get_task_detail_with_token_cost_data(app_with_db):
+    """GET /api/tasks/{id} returns token and cost fields that the side
+    panel uses to display execution metrics."""
+    client, db = app_with_db
+    r = await client.post("/api/tasks", json={"title": "Token test", "prompt": "p"})
+    task_id = r.json()["id"]
+    await db.update_task(
+        task_id,
+        status=TaskStatus.COMPLETED,
+        input_tokens=1500,
+        output_tokens=800,
+        cost_usd=0.0042,
+    )
+
+    resp = await client.get(f"/api/tasks/{task_id}")
+    assert resp.status_code == 200
+    task = resp.json()["task"]
+    assert task["input_tokens"] == 1500
+    assert task["output_tokens"] == 800
+    assert task["cost_usd"] == pytest.approx(0.0042)
+
+
+async def test_get_task_detail_with_error_field(app_with_db):
+    """GET /api/tasks/{id} returns the error field for failed tasks, which
+    the side panel renders in red."""
+    client, db = app_with_db
+    r = await client.post("/api/tasks", json={"title": "Error test", "prompt": "p"})
+    task_id = r.json()["id"]
+    await db.update_task(
+        task_id,
+        status=TaskStatus.FAILED,
+        error="Process exited with code 1: segfault",
+    )
+
+    resp = await client.get(f"/api/tasks/{task_id}")
+    assert resp.status_code == 200
+    task = resp.json()["task"]
+    assert task["status"] == "failed"
+    assert task["error"] == "Process exited with code 1: segfault"
+
+
+async def test_get_task_detail_with_output(app_with_db):
+    """GET /api/tasks/{id} returns the output field for completed tasks."""
+    client, db = app_with_db
+    r = await client.post("/api/tasks", json={"title": "Output test", "prompt": "p"})
+    task_id = r.json()["id"]
+    await db.update_task(
+        task_id,
+        status=TaskStatus.COMPLETED,
+        output="Task completed successfully. Created 3 files.",
+    )
+
+    resp = await client.get(f"/api/tasks/{task_id}")
+    assert resp.status_code == 200
+    task = resp.json()["task"]
+    assert task["output"] == "Task completed successfully. Created 3 files."
+
+
+async def test_get_task_logs_multiple_levels(app_with_db):
+    """GET /api/tasks/{id}/logs returns logs with different levels that the
+    side panel styles differently (log-level-info, log-level-error, etc.)."""
+    client, db = app_with_db
+    r = await client.post("/api/tasks", json={"title": "Log levels", "prompt": "p"})
+    task_id = r.json()["id"]
+    await db.add_log(task_id, "info", "Started")
+    await db.add_log(task_id, "error", "Failed to clone")
+    await db.add_log(task_id, "info", "Retrying")
+
+    resp = await client.get(f"/api/tasks/{task_id}/logs")
+    assert resp.status_code == 200
+    logs = resp.json()
+    assert len(logs) == 3
+    levels = [l["level"] for l in logs]
+    assert levels == ["info", "error", "info"]
+
+
+async def test_get_task_detail_timestamps(app_with_db):
+    """GET /api/tasks/{id} returns started_at and completed_at timestamps
+    that the side panel conditionally displays."""
+    client, db = app_with_db
+    r = await client.post("/api/tasks", json={"title": "Timestamps", "prompt": "p"})
+    task_id = r.json()["id"]
+
+    # Initially, started_at and completed_at should be null
+    resp = await client.get(f"/api/tasks/{task_id}")
+    task = resp.json()["task"]
+    assert task["started_at"] is None
+    assert task["completed_at"] is None
+    assert task["created_at"] is not None
+
+
+async def test_cancel_then_retry_roundtrip(app_with_db):
+    """Cancel and retry a task via API endpoints, simulating the side panel
+    cancel → retry workflow."""
+    client, db = app_with_db
+    r = await client.post("/api/tasks", json={"title": "Roundtrip", "prompt": "p"})
+    task_id = r.json()["id"]
+
+    # Cancel
+    resp = await client.post(f"/api/tasks/{task_id}/cancel")
+    assert resp.status_code == 200
+    task = await db.get_task(task_id)
+    assert task.status == TaskStatus.CANCELLED
+
+    # Retry
+    resp = await client.post(f"/api/tasks/{task_id}/retry")
+    assert resp.status_code == 200
+    task = await db.get_task(task_id)
+    assert task.status == TaskStatus.PENDING
+
+
+async def test_delete_task_with_logs_cascades(app_with_db):
+    """Deleting a task also removes its logs (cascade), so the side panel
+    won't show stale data if a task ID is reused."""
+    client, db = app_with_db
+    r = await client.post("/api/tasks", json={"title": "Cascade", "prompt": "p"})
+    task_id = r.json()["id"]
+    await db.add_log(task_id, "info", "log entry 1")
+    await db.add_log(task_id, "info", "log entry 2")
+
+    # Verify logs exist
+    logs = await db.get_task_logs(task_id)
+    assert len(logs) == 2
+
+    # Delete
+    resp = await client.delete(f"/api/tasks/{task_id}")
+    assert resp.status_code == 200
+
+    # Task and logs should be gone
+    assert await db.get_task(task_id) is None
+    logs_after = await db.get_task_logs(task_id)
+    assert len(logs_after) == 0
