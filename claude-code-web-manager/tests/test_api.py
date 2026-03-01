@@ -390,6 +390,48 @@ async def test_cancel_then_retry_roundtrip(app_with_db):
     assert task.status == TaskStatus.PENDING
 
 
+async def test_side_panel_full_task_data(app_with_db):
+    """GET /api/tasks/{id} returns all fields the side panel needs for a
+    fully-executed task: status, priority, timestamps, tokens, cost, output."""
+    client, db = app_with_db
+    r = await client.post(
+        "/api/tasks",
+        json={"title": "Full data", "prompt": "Complete task prompt", "priority": "high"},
+    )
+    task_id = r.json()["id"]
+
+    # Simulate a completed task with all fields populated
+    await db.update_task(
+        task_id,
+        status=TaskStatus.COMPLETED,
+        input_tokens=5000,
+        output_tokens=2500,
+        cost_usd=0.0125,
+        output="All files created successfully.",
+        exit_code=0,
+    )
+
+    resp = await client.get(f"/api/tasks/{task_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    task = data["task"]
+
+    # All side-panel fields should be present and correct
+    assert task["id"] == task_id
+    assert task["title"] == "Full data"
+    assert task["prompt"] == "Complete task prompt"
+    assert task["status"] == "completed"
+    assert task["priority"] == "high"
+    assert task["created_at"] is not None
+    assert task["input_tokens"] == 5000
+    assert task["output_tokens"] == 2500
+    assert task["cost_usd"] == pytest.approx(0.0125)
+    assert task["output"] == "All files created successfully."
+    assert task["exit_code"] == 0
+    assert task["error"] is None
+    assert isinstance(data["logs"], list)
+
+
 async def test_delete_task_with_logs_cascades(app_with_db):
     """Deleting a task also removes its logs (cascade), so the side panel
     won't show stale data if a task ID is reused."""

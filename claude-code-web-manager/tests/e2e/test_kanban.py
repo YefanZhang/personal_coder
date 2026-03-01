@@ -689,6 +689,54 @@ def test_side_panel_action_buttons_cancelled(page: Page):
     expect(panel.locator("button.danger:has-text('Cancel')")).not_to_be_visible()
 
 
+# ── Test 7q: Side panel direct switching (click another card while open) ──
+
+def test_side_panel_direct_switching(page: Page):
+    """Click a second task card while the side panel is already open for a
+    different task — the panel should update without needing to close first."""
+    # Create two tasks with unsatisfied deps to keep them pending
+    page.request.post(
+        f"{BASE_URL}/api/tasks",
+        data={
+            "title": "Direct switch A",
+            "prompt": "Prompt A for direct switching test",
+            "priority": "high",
+            "mode": "execute",
+            "depends_on": [999999],
+        },
+    )
+    page.request.post(
+        f"{BASE_URL}/api/tasks",
+        data={
+            "title": "Direct switch B",
+            "prompt": "Prompt B for direct switching test",
+            "priority": "low",
+            "mode": "execute",
+            "depends_on": [999999],
+        },
+    )
+
+    page.goto(BASE_URL)
+    expect(page.locator(".task-card")).to_have_count(2, timeout=5000)
+
+    # Click first card — panel opens
+    page.locator(".task-card").first.click()
+    panel = page.locator(".side-panel")
+    expect(panel).to_be_visible(timeout=3000)
+    expect(panel.locator(".panel-header h2")).to_contain_text("Direct switch A")
+    expect(panel.locator(".prompt-text")).to_contain_text("Prompt A")
+
+    # Click second card WITHOUT closing the panel first
+    page.locator(".task-card").nth(1).click()
+
+    # Panel should update to show the second task's details
+    expect(panel.locator(".panel-header h2")).to_contain_text("Direct switch B")
+    expect(panel.locator(".prompt-text")).to_contain_text("Prompt B")
+
+    # Priority badge should switch from high to low
+    expect(panel.locator(".badge-low")).to_be_visible()
+
+
 # ── Test 8: Full task execution end-to-end ──────────────────────────────
 
 def test_task_executes_end_to_end(page: Page):
