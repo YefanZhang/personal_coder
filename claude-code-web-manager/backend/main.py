@@ -14,6 +14,7 @@ from backend.executor import ClaudeCodeExecutor
 from backend.scheduler import TaskScheduler
 from backend.task_registry import TaskRegistry
 from backend.models import Task, TaskStatus, TaskMode, CreateTaskRequest
+from backend.chat import ChatSession
 
 # ── Singletons ────────────────────────────────────────────────────────────────
 
@@ -244,6 +245,65 @@ async def websocket_endpoint(ws: WebSocket):
             await ws.receive_text()  # keep-alive ping/pong
     except WebSocketDisconnect:
         ws_manager.disconnect(ws)
+
+
+# ── Chat WebSocket ───────────────────────────────────────────────────────────
+
+_chat_sessions: dict[int, ChatSession] = {}  # keyed by id(ws)
+
+
+@app.websocket("/ws/chat")
+async def chat_endpoint(ws: WebSocket):
+    await ws.accept()
+    base_repo = os.getenv("BASE_REPO", "/home/ubuntu/personal_coder")
+    session = ChatSession(working_dir=base_repo)
+    ws_id = id(ws)
+    _chat_sessions[ws_id] = session
+
+    async def _send(data: dict) -> None:
+        try:
+            await ws.send_text(json.dumps(data))
+        except Exception:
+            pass
+
+    try:
+        while True:
+            raw = await ws.receive_text()
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                await _send({"type": "error", "message": "Invalid JSON"})
+                continue
+
+            msg_type = msg.get("type")
+
+            if msg_type == "message":
+                text = msg.get("text", "").strip()
+                if not text:
+                    await _send({"type": "error", "message": "Empty message"})
+                    continue
+
+                # Allow changing working directory
+                wd = msg.get("working_dir")
+                if wd and os.path.isdir(wd):
+                    session.working_dir = wd
+
+                await session.send_message(
+                    text=text,
+                    on_text=lambda t: _send({"type": "assistant_text", "text": t}),
+                    on_tool=lambda s: _send({"type": "tool_use", "summary": s}),
+                    on_session_info=lambda m: _send({"type": "session_start", "model": m}),
+                    on_done=lambda d: _send({"type": "message_done", **d}),
+                    on_error=lambda e: _send({"type": "error", "message": e}),
+                )
+
+            elif msg_type == "cancel":
+                await session.cancel()
+                await _send({"type": "cancelled"})
+
+    except WebSocketDisconnect:
+        await session.cleanup()
+        _chat_sessions.pop(ws_id, None)
 
 
 # ── Static frontend (must be last) ───────────────────────────────────────────
