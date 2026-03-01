@@ -1,9 +1,16 @@
 {
   "meta": {
-    "last_synced_at": "2026-03-01T07:41:33.128956",
+    "last_synced_at": "2026-03-01T07:42:32.642190",
     "total_cost_usd": 0,
-    "cli_tasks": 0,
+    "cli_tasks": 1,
     "web_tasks": 0
   },
-  "tasks": []
+  "tasks": [
+    {
+      "id": "user-001",
+      "title": "Add protected flag to prevent E2E test cleanup from deleting real tasks",
+      "status": "in_progress",
+      "source": "cli"
+    }
+  ]
 }
