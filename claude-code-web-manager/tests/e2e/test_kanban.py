@@ -689,6 +689,179 @@ def test_side_panel_action_buttons_cancelled(page: Page):
     expect(panel.locator("button.danger:has-text('Cancel')")).not_to_be_visible()
 
 
+# ── Test 7q: Side panel direct task switching (no close in between) ───
+
+def test_side_panel_direct_switch(page: Page):
+    """Click one task card, then click another without closing — panel content should update."""
+    page.request.post(
+        f"{BASE_URL}/api/tasks",
+        data={
+            "title": "Direct switch A",
+            "prompt": "Prompt for task A",
+            "priority": "high",
+            "mode": "execute",
+            "depends_on": [999999],
+        },
+    )
+    page.request.post(
+        f"{BASE_URL}/api/tasks",
+        data={
+            "title": "Direct switch B",
+            "prompt": "Prompt for task B",
+            "priority": "low",
+            "mode": "execute",
+            "depends_on": [999999],
+        },
+    )
+
+    page.goto(BASE_URL)
+    expect(page.locator(".task-card")).to_have_count(2, timeout=5000)
+
+    # Click first task
+    page.locator(".task-card").first.click()
+    panel = page.locator(".side-panel")
+    expect(panel).to_be_visible(timeout=3000)
+    expect(panel.locator(".panel-header h2")).to_contain_text("Direct switch A")
+    expect(panel.locator(".prompt-text")).to_contain_text("Prompt for task A")
+
+    # Click second task WITHOUT closing the panel first
+    page.locator(".task-card").nth(1).click()
+    expect(panel).to_be_visible(timeout=3000)
+    expect(panel.locator(".panel-header h2")).to_contain_text("Direct switch B")
+    expect(panel.locator(".prompt-text")).to_contain_text("Prompt for task B")
+
+    # Verify first task content is gone
+    expect(panel.locator(".panel-header h2")).not_to_contain_text("Direct switch A")
+
+
+# ── Test 7r: Side panel with plan mode task ──────────────────────────
+
+def test_side_panel_plan_mode_task(page: Page):
+    """Create a plan mode task and verify the prompt is displayed correctly in the panel."""
+    page.request.post(
+        f"{BASE_URL}/api/tasks",
+        data={
+            "title": "Plan mode panel test",
+            "prompt": "Implement a new feature for user login",
+            "priority": "medium",
+            "mode": "plan",
+            "depends_on": [999999],
+        },
+    )
+
+    page.goto(BASE_URL)
+    expect(page.locator(".task-card")).to_have_count(1, timeout=5000)
+    page.click(".task-card")
+
+    panel = page.locator(".side-panel")
+    expect(panel).to_be_visible(timeout=3000)
+
+    # Title should appear
+    expect(panel.locator(".panel-header h2")).to_contain_text("Plan mode panel test")
+
+    # Prompt should contain the user's prompt text
+    expect(panel.locator(".prompt-text")).to_contain_text(
+        "Implement a new feature for user login",
+    )
+
+
+# ── Test 7s: Side panel XSS safety in prompt ────────────────────────
+
+def test_side_panel_xss_safety(page: Page):
+    """Verify that special HTML characters in prompts are rendered safely (not executed)."""
+    xss_prompt = '<script>alert("xss")</script><img src=x onerror=alert(1)>'
+    page.request.post(
+        f"{BASE_URL}/api/tasks",
+        data={
+            "title": "XSS safety test",
+            "prompt": xss_prompt,
+            "priority": "medium",
+            "mode": "execute",
+            "depends_on": [999999],
+        },
+    )
+
+    page.goto(BASE_URL)
+    expect(page.locator(".task-card")).to_have_count(1, timeout=5000)
+    page.click(".task-card")
+
+    panel = page.locator(".side-panel")
+    expect(panel).to_be_visible(timeout=3000)
+
+    # The raw text should be visible (rendered as text, not executed as HTML)
+    prompt_el = panel.locator(".prompt-text")
+    expect(prompt_el).to_contain_text("<script>")
+    expect(prompt_el).to_contain_text("</script>")
+
+    # No script tags should exist as actual DOM elements inside the panel
+    assert panel.locator("script").count() == 0
+
+
+# ── Test 7t: Side panel re-open same task ────────────────────────────
+
+def test_side_panel_reopen_same_task(page: Page):
+    """Close the side panel and re-open the same task — content should persist."""
+    page.request.post(
+        f"{BASE_URL}/api/tasks",
+        data={
+            "title": "Reopen test task",
+            "prompt": "Persistent content test",
+            "priority": "urgent",
+            "mode": "execute",
+            "depends_on": [999999],
+        },
+    )
+
+    page.goto(BASE_URL)
+    expect(page.locator(".task-card")).to_have_count(1, timeout=5000)
+
+    # Open panel
+    page.click(".task-card")
+    panel = page.locator(".side-panel")
+    expect(panel).to_be_visible(timeout=3000)
+    expect(panel.locator(".panel-header h2")).to_contain_text("Reopen test task")
+
+    # Close via Escape
+    page.keyboard.press("Escape")
+    expect(panel).not_to_be_visible()
+
+    # Re-open same task
+    page.click(".task-card")
+    expect(panel).to_be_visible(timeout=3000)
+    expect(panel.locator(".panel-header h2")).to_contain_text("Reopen test task")
+    expect(panel.locator(".prompt-text")).to_contain_text("Persistent content test")
+    expect(panel.locator(".badge-urgent")).to_be_visible()
+
+
+# ── Test 7u: Side panel with multiple priority badges ────────────────
+
+def test_side_panel_priority_badges_per_task(page: Page):
+    """Create tasks with different priorities and verify each shows correct badge in panel."""
+    for title, priority in [("High pri task", "high"), ("Low pri task", "low"), ("Urgent pri task", "urgent")]:
+        page.request.post(
+            f"{BASE_URL}/api/tasks",
+            data={
+                "title": title,
+                "prompt": f"Priority test for {priority}",
+                "priority": priority,
+                "mode": "execute",
+                "depends_on": [999999],
+            },
+        )
+
+    page.goto(BASE_URL)
+    expect(page.locator(".task-card")).to_have_count(3, timeout=5000)
+
+    panel = page.locator(".side-panel")
+
+    # Check each task's priority badge
+    for i, (title, priority) in enumerate([("High pri task", "high"), ("Low pri task", "low"), ("Urgent pri task", "urgent")]):
+        page.locator(".task-card").nth(i).click()
+        expect(panel).to_be_visible(timeout=3000)
+        expect(panel.locator(".panel-header h2")).to_contain_text(title)
+        expect(panel.locator(f".badge-{priority}")).to_be_visible()
+
+
 # ── Test 8: Full task execution end-to-end ──────────────────────────────
 
 def test_task_executes_end_to_end(page: Page):
