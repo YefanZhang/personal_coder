@@ -401,6 +401,110 @@
     .template-row button.delete-tpl { background: #21262d; border-color: #30363d; }
     .template-row button.delete-tpl:hover { background: #da3633; border-color: #f85149; }
 
+    /* -- Chat Window -- */
+    .chat-panel-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5); z-index: 200;
+    }
+
+    .chat-panel {
+      position: fixed; top: 0; right: 0; bottom: 0;
+      width: min(800px, 95vw);
+      background: #161b22;
+      border-left: 1px solid #30363d;
+      z-index: 201;
+      display: flex;
+      flex-direction: column;
+      animation: slideIn 0.2s ease-out;
+    }
+
+    .chat-header {
+      padding: 12px 20px;
+      border-bottom: 1px solid #30363d;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .chat-header h2 { font-size: 16px; color: #f0f6fc; white-space: nowrap; }
+    .chat-header-info {
+      flex: 1; display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: #8b949e; overflow: hidden;
+    }
+    .chat-header-info .session-id { color: #58a6ff; }
+    .chat-header-info .model-name { color: #3fb950; }
+
+    .chat-messages {
+      flex: 1; overflow-y: auto; padding: 16px 20px;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+
+    .chat-msg {
+      max-width: 90%; padding: 10px 14px; border-radius: 8px;
+      font-size: 14px; line-height: 1.6; word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .chat-msg.user {
+      align-self: flex-end;
+      background: #0d2644; color: #c9d1d9;
+      border: 1px solid #1f6feb;
+    }
+    .chat-msg.assistant {
+      align-self: flex-start;
+      background: #0d1117; color: #e1e4e8;
+      border: 1px solid #30363d;
+    }
+    .chat-msg.error {
+      align-self: flex-start;
+      background: #3d1214; color: #f85149;
+      border: 1px solid #da3633;
+    }
+    .chat-msg.system-info {
+      align-self: center;
+      background: transparent; color: #8b949e;
+      border: none; font-size: 12px; font-style: italic;
+      padding: 4px 8px;
+    }
+
+    .chat-msg .tool-line {
+      color: #58a6ff;
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 12px; display: block; margin: 2px 0;
+    }
+
+    .chat-msg-meta {
+      font-size: 11px; color: #484f58; margin-top: 6px;
+    }
+
+    .chat-streaming-cursor::after {
+      content: '\u2588'; animation: blink 1s step-end infinite; color: #58a6ff;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .chat-input-area {
+      padding: 12px 20px;
+      border-top: 1px solid #30363d;
+      display: flex; gap: 8px; align-items: flex-end;
+    }
+    .chat-input-area textarea {
+      flex: 1; min-height: 40px; max-height: 120px;
+      margin-bottom: 0; resize: none;
+      font-size: 14px;
+    }
+    .chat-input-area button {
+      height: 40px; padding: 0 16px; white-space: nowrap;
+    }
+    .chat-input-area button.cancel-btn {
+      background: #da3633; border-color: #f85149;
+    }
+
+    .chat-btn {
+      background: #0d2644; border: 1px solid #1f6feb; color: #58a6ff;
+      padding: 4px 12px; border-radius: 6px; font-size: 13px;
+      cursor: pointer; font-weight: 500;
+    }
+    .chat-btn:hover { background: #1f6feb; color: #fff; }
+
     /* -- Responsive -- */
     @media (max-width: 768px) {
       .kanban-board { padding: 12px; gap: 8px; }
@@ -408,6 +512,7 @@
       .form-row { flex-direction: column; }
       .form-row select { width: 100%; }
       .side-panel { width: 100vw; }
+      .chat-panel { width: 100vw; }
       .voice-row { flex-direction: row; }
     }
   </style>
@@ -955,6 +1060,248 @@ Only after the plan is approved will you proceed with execution.
       );
     }
 
+    // -- ChatWindow Component --
+    function ChatWindow({ onClose }) {
+      const [messages, setMessages] = useState([]);
+      const [input, setInput] = useState('');
+      const [isStreaming, setIsStreaming] = useState(false);
+      const [wsConnected, setWsConnected] = useState(false);
+      const [model, setModel] = useState('');
+      const [sessionId, setSessionId] = useState(null);
+      const wsRef = useRef(null);
+      const messagesEndRef = useRef(null);
+      const inputRef = useRef(null);
+      const streamBufRef = useRef({ text: '', tools: [] });
+
+      // Auto-scroll to bottom
+      useEffect(() => {
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, [messages]);
+
+      // Focus input on open
+      useEffect(() => {
+        if (inputRef.current) inputRef.current.focus();
+      }, []);
+
+      // WebSocket connection
+      useEffect(() => {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const socket = new WebSocket(`${proto}//${location.host}/ws/chat`);
+
+        socket.onopen = () => setWsConnected(true);
+        socket.onclose = () => setWsConnected(false);
+        socket.onerror = () => socket.close();
+
+        socket.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+
+            switch (msg.type) {
+              case 'session_start':
+                setModel(msg.model);
+                setMessages(prev => [...prev, {
+                  role: 'system', text: `Session started — model: ${msg.model}`
+                }]);
+                break;
+
+              case 'assistant_text':
+                streamBufRef.current.text += msg.text;
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last && last.role === 'assistant' && last.streaming) {
+                    updated[updated.length - 1] = {
+                      ...last,
+                      text: streamBufRef.current.text,
+                      tools: [...streamBufRef.current.tools],
+                    };
+                  } else {
+                    updated.push({
+                      role: 'assistant', text: streamBufRef.current.text,
+                      tools: [...streamBufRef.current.tools], streaming: true,
+                    });
+                  }
+                  return updated;
+                });
+                break;
+
+              case 'tool_use':
+                streamBufRef.current.tools.push(msg.summary);
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last && last.role === 'assistant' && last.streaming) {
+                    updated[updated.length - 1] = {
+                      ...last,
+                      tools: [...streamBufRef.current.tools],
+                    };
+                  } else {
+                    updated.push({
+                      role: 'assistant', text: streamBufRef.current.text,
+                      tools: [...streamBufRef.current.tools], streaming: true,
+                    });
+                  }
+                  return updated;
+                });
+                break;
+
+              case 'message_done':
+                setIsStreaming(false);
+                if (msg.session_id) setSessionId(msg.session_id);
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last && last.role === 'assistant' && last.streaming) {
+                    updated[updated.length - 1] = {
+                      ...last,
+                      streaming: false,
+                      tokens: msg.input_tokens != null
+                        ? `${msg.input_tokens?.toLocaleString()} in / ${msg.output_tokens?.toLocaleString()} out`
+                        : null,
+                      cost: msg.cost_usd,
+                    };
+                  }
+                  return updated;
+                });
+                streamBufRef.current = { text: '', tools: [] };
+                break;
+
+              case 'error':
+                setIsStreaming(false);
+                setMessages(prev => [...prev, { role: 'error', text: msg.message }]);
+                streamBufRef.current = { text: '', tools: [] };
+                break;
+
+              case 'cancelled':
+                setIsStreaming(false);
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last && last.role === 'assistant' && last.streaming) {
+                    updated[updated.length - 1] = { ...last, streaming: false, text: last.text + '\n[Cancelled]' };
+                  }
+                  return updated;
+                });
+                streamBufRef.current = { text: '', tools: [] };
+                break;
+            }
+          } catch (e) {
+            console.error('Chat WS parse error:', e);
+          }
+        };
+
+        wsRef.current = socket;
+        return () => socket.close();
+      }, []);
+
+      const sendMessage = useCallback(() => {
+        const text = input.trim();
+        if (!text || !wsRef.current || isStreaming) return;
+
+        setMessages(prev => [...prev, { role: 'user', text }]);
+        setInput('');
+        setIsStreaming(true);
+        streamBufRef.current = { text: '', tools: [] };
+
+        wsRef.current.send(JSON.stringify({ type: 'message', text }));
+      }, [input, isStreaming]);
+
+      const cancelStream = useCallback(() => {
+        if (wsRef.current) {
+          wsRef.current.send(JSON.stringify({ type: 'cancel' }));
+        }
+      }, []);
+
+      const handleKeyDown = useCallback((e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      }, [sendMessage]);
+
+      // Escape to close
+      useEffect(() => {
+        const handler = (e) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+      }, [onClose]);
+
+      return (
+        <React.Fragment>
+          <div className="chat-panel-overlay" onClick={onClose} />
+          <div className="chat-panel">
+            <div className="chat-header">
+              <h2>Chat</h2>
+              <div className="chat-header-info">
+                {model && <span className="model-name">{model}</span>}
+                {sessionId && <span className="session-id">session: {sessionId.slice(0, 8)}...</span>}
+                <div className={`ws-dot${wsConnected ? ' connected' : ''}`}
+                  style={{width: 8, height: 8, borderRadius: '50%', flexShrink: 0}} />
+              </div>
+              <button className="panel-close" onClick={onClose}>&times;</button>
+            </div>
+
+            <div className="chat-messages">
+              {messages.length === 0 && (
+                <div style={{textAlign: 'center', color: '#484f58', padding: '40px 0', fontSize: 14}}>
+                  Start a conversation with Claude Code.<br/>
+                  <span style={{fontSize: 12, color: '#30363d'}}>
+                    Messages run in: {'{base_repo}'}
+                  </span>
+                </div>
+              )}
+              {messages.map((msg, i) => {
+                if (msg.role === 'system') {
+                  return <div key={i} className="chat-msg system-info">{msg.text}</div>;
+                }
+                if (msg.role === 'error') {
+                  return <div key={i} className="chat-msg error">{msg.text}</div>;
+                }
+                return (
+                  <div key={i} className={`chat-msg ${msg.role}`}>
+                    {msg.tools && msg.tools.length > 0 && (
+                      msg.tools.map((t, j) => (
+                        <span key={j} className="tool-line">{t}</span>
+                      ))
+                    )}
+                    <span className={msg.streaming ? 'chat-streaming-cursor' : ''}>
+                      {msg.text}
+                    </span>
+                    {msg.tokens && (
+                      <div className="chat-msg-meta">
+                        {msg.tokens}{msg.cost != null ? ` · $${msg.cost.toFixed(4)}` : ''}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <div ref={messagesEndRef} />
+            </div>
+
+            <div className="chat-input-area">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={isStreaming ? 'Waiting for response...' : 'Type a message... (Enter to send, Shift+Enter for newline)'}
+                disabled={isStreaming || !wsConnected}
+              />
+              {isStreaming ? (
+                <button className="cancel-btn" onClick={cancelStream}>Cancel</button>
+              ) : (
+                <button onClick={sendMessage} disabled={!input.trim() || !wsConnected}>
+                  Send
+                </button>
+              )}
+            </div>
+          </div>
+        </React.Fragment>
+      );
+    }
+
     // -- App Component --
     function App() {
       const [tasks, setTasks] = useState([]);
@@ -963,6 +1310,7 @@ Only after the plan is approved will you proceed with execution.
       const [logs, setLogs] = useState([]);
       const [wsConnected, setWsConnected] = useState(false);
       const [streamingLogs, setStreamingLogs] = useState({});
+      const [chatOpen, setChatOpen] = useState(false);
       const wsRef = useRef(null);
       const selectedIdRef = useRef(null);
 
@@ -1104,6 +1452,9 @@ Only after the plan is approved will you proceed with execution.
               <span className="cost-summary">
                 {tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; ${totalCost.toFixed(4)}
               </span>
+              <button className="chat-btn" onClick={() => setChatOpen(true)}>
+                Chat
+              </button>
               <div className="ws-status">
                 <div className={`ws-dot${wsConnected ? ' connected' : ''}`} />
                 <span>{wsConnected ? 'Connected' : 'Disconnected'}</span>
@@ -1136,6 +1487,10 @@ Only after the plan is approved will you proceed with execution.
               onRetry={handleRetry}
               onDelete={handleDelete}
             />
+          )}
+
+          {chatOpen && (
+            <ChatWindow onClose={() => setChatOpen(false)} />
           )}
         </React.Fragment>
       );
