@@ -13,7 +13,7 @@ from backend.database import Database
 from backend.executor import ClaudeCodeExecutor
 from backend.scheduler import TaskScheduler
 from backend.task_registry import TaskRegistry
-from backend.models import Task, TaskStatus, TaskMode, CreateTaskRequest
+from backend.models import Task, TaskStatus, TaskMode, CreateTaskRequest, RejectPlanRequest
 from backend.chat import ChatSession
 
 # ── Singletons ────────────────────────────────────────────────────────────────
@@ -183,7 +183,8 @@ async def get_task(task_id: int):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     logs = await db.get_task_logs(task_id)
-    return {"task": task, "logs": logs}
+    plans = await db.get_task_plans(task_id)
+    return {"task": task, "logs": logs, "plans": plans}
 
 
 @app.get("/api/tasks/{task_id}/logs")
@@ -220,7 +221,35 @@ async def approve_plan(task_id: int):
     task = await db.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    # Keep the plan text so executor can feed it into the execution prompt
     await db.update_task(task_id, status=TaskStatus.PENDING, mode=TaskMode.EXECUTE.value)
+    await _sync_registry()
+    return {"status": "pending"}
+
+
+@app.post("/api/tasks/{task_id}/reject-plan", dependencies=[Depends(verify_api_key)])
+async def reject_plan(task_id: int, req: RejectPlanRequest):
+    task = await db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    # Store feedback against the latest plan version
+    plans = await db.get_task_plans(task_id)
+    if plans:
+        latest = plans[-1]
+        await db.update_plan_feedback(latest.id, req.feedback)
+    # Append feedback to prompt so the next plan attempt incorporates it
+    updated_prompt = (
+        f"{task.prompt}\n\n"
+        f"## Previous Plan Feedback (plan was rejected)\n"
+        f"{req.feedback}"
+    )
+    await db.update_task(
+        task_id,
+        status=TaskStatus.PENDING,
+        mode=TaskMode.PLAN.value,
+        prompt=updated_prompt,
+        plan=None,
+    )
     await _sync_registry()
     return {"status": "pending"}
 

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 from pathlib import Path
 
-from backend.models import Task, TaskStatus, TaskMode, TaskPriority, TaskLog
+from backend.models import Task, TaskStatus, TaskMode, TaskPriority, TaskLog, TaskPlan
 
 # Priority ordering for SQL queries (higher number = higher priority)
 PRIORITY_ORDER = {
@@ -50,9 +50,19 @@ CREATE TABLE IF NOT EXISTS task_logs (
     raw_output TEXT
 );
 
+CREATE TABLE IF NOT EXISTS task_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL DEFAULT 1,
+    plan_text TEXT NOT NULL,
+    feedback TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority, created_at);
 CREATE INDEX IF NOT EXISTS idx_task_logs_task_id ON task_logs(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_plans_task_id ON task_plans(task_id);
 """
 
 
@@ -215,6 +225,43 @@ class Database:
         ) as cursor:
             rows = await cursor.fetchall()
         return [_row_to_log(r) for r in rows]
+
+    async def add_plan(
+        self,
+        task_id: int,
+        plan_text: str,
+        feedback: Optional[str] = None,
+    ) -> None:
+        """Store a plan version for a task."""
+        # Determine next version number
+        async with self._conn.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM task_plans WHERE task_id = ?",
+            (task_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        next_version = row[0] + 1
+        await self._conn.execute(
+            "INSERT INTO task_plans (task_id, version, plan_text, feedback) VALUES (?, ?, ?, ?)",
+            (task_id, next_version, plan_text, feedback),
+        )
+        await self._conn.commit()
+
+    async def update_plan_feedback(self, plan_id: int, feedback: str) -> None:
+        """Store rejection feedback on a plan version."""
+        await self._conn.execute(
+            "UPDATE task_plans SET feedback = ? WHERE id = ?",
+            (feedback, plan_id),
+        )
+        await self._conn.commit()
+
+    async def get_task_plans(self, task_id: int) -> list[TaskPlan]:
+        """Get all plan versions for a task, ordered by version."""
+        async with self._conn.execute(
+            "SELECT * FROM task_plans WHERE task_id = ? ORDER BY version ASC",
+            (task_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [TaskPlan(**dict(r)) for r in rows]
 
     async def delete_task(self, task_id: int) -> None:
         await self._conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))

@@ -66,6 +66,15 @@ class TaskLog(BaseModel):
     raw_output: Optional[str] = None
 
 
+class TaskPlan(BaseModel):
+    id: int
+    task_id: int
+    version: int
+    plan_text: str
+    feedback: Optional[str] = None
+    created_at: datetime
+
+
 class CreateTaskRequest(BaseModel):
     title: str
     prompt: str
@@ -74,3 +83,7 @@ class CreateTaskRequest(BaseModel):
     depends_on: list[int] = []
     repo_path: Optional[str] = None
     tags: list[str] = []
+
+
+class RejectPlanRequest(BaseModel):
+    feedback: str
